@@ -119,14 +119,20 @@ namespace Microsoft.VisualStudio.Web.CodeGenerators.Mvc.Templates.Blazor
             this.Write(this.ToStringHelper.ToStringWithCulture(primaryKeyShortTypeName));
             this.Write(" ");
             this.Write(this.ToStringHelper.ToStringWithCulture(primaryKeyName));
-            this.Write(" { get; set; }\r\n\r\n    [SupplyParameterFromForm]\r\n    private ");
+                this.Write(" { get; set; }\r\n\r\n    [SupplyParameterFromForm]\r\n    private ");
             this.Write(this.ToStringHelper.ToStringWithCulture(modelName));
             this.Write("? ");
             this.Write(this.ToStringHelper.ToStringWithCulture(modelName));
-            this.Write(" { get; set; }\r\n\r\n    protected override async Task OnInitializedAsync()\r\n    {\r\n" +
+                this.Write(" { get; set; }\r\n\r\n    [PersistentState]\r\n    public ");
+                this.Write(this.ToStringHelper.ToStringWithCulture(modelName));
+                this.Write("? ");
+                this.Write(this.ToStringHelper.ToStringWithCulture(modelName));
+                this.Write("State { get; set; }\r\n\r\n    protected override async Task OnInitializedAsync()\r\n    {\r\n" +
                     "        using var context = DbFactory.CreateDbContext();\r\n        ");
             this.Write(this.ToStringHelper.ToStringWithCulture(modelName));
-            this.Write(" ??= await context.");
+                this.Write(" ??= ");
+                this.Write(this.ToStringHelper.ToStringWithCulture(modelName));
+                this.Write("State ??= await context.");
             this.Write(this.ToStringHelper.ToStringWithCulture(entitySetName));
             this.Write(".FirstOrDefaultAsync(m => m.");
             this.Write(this.ToStringHelper.ToStringWithCulture(primaryKeyName));
