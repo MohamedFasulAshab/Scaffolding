@@ -69,7 +69,6 @@ public class BlazorCrudNet10IntegrationTests : BlazorCrudIntegrationTestsBase
 
             // Verify project builds after scaffolding
             var (afterExitCode, _, afterError) = await RunBuildAsync(_testProjectDir);
-            Assert.True(afterExitCode == 0, $"Project should still build after scaffolding. Error: {afterError}");
-        }
+            Assert.True(afterExitCode == 0, $"Project should still build after scaffolding. Error: {afterError}");        
     }
 }
