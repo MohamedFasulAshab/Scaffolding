@@ -125,7 +125,7 @@ namespace Microsoft.DotNet.Tools.Scaffold.AspNet.Templates.net9.BlazorCrud
             this.Write(this.ToStringHelper.ToStringWithCulture(modelName));
             this.Write("? ");
             this.Write(this.ToStringHelper.ToStringWithCulture(modelName));
-                this.Write(" { get; set; }\r\n\r\n    private PersistingComponentStateSubscription persistingSubscription;\r\n\r\n    protected override async Task OnInitializedAsync()\r\n    {\r\n        if (");
+                this.Write(" { get; set; }\r\n\r\n    private PersistingComponentStateSubscription? persistingSubscription;\r\n\r\n    protected override async Task OnInitializedAsync()\r\n    {\r\n        persistingSubscription ??= ApplicationState.RegisterOnPersisting(PersistData);\r\n\r\n        if (");
             this.Write(this.ToStringHelper.ToStringWithCulture(modelName));
                 this.Write(" is null)\r\n        {\r\n            if (!ApplicationState.TryTakeFromJson<");
                 this.Write(this.ToStringHelper.ToStringWithCulture(modelName));
@@ -150,18 +150,23 @@ namespace Microsoft.DotNet.Tools.Scaffold.AspNet.Templates.net9.BlazorCrud
             this.Write(@" is null)
         {
             NavigationManager.NavigateTo(""notfound"");
+            return;
         }
-
-        persistingSubscription = ApplicationState.RegisterOnPersisting(PersistData);
     }
 
     private Task PersistData()
     {
-        ApplicationState.PersistAsJson(nameof(");
+        if (");
+            this.Write(this.ToStringHelper.ToStringWithCulture(modelName));
+            this.Write(@" is not null)
+        {
+            ApplicationState.PersistAsJson(nameof(");
             this.Write(this.ToStringHelper.ToStringWithCulture(modelName));
             this.Write("), ");
             this.Write(this.ToStringHelper.ToStringWithCulture(modelName));
             this.Write(@");
+        }
+
         return Task.CompletedTask;
     }
 
@@ -197,7 +202,7 @@ namespace Microsoft.DotNet.Tools.Scaffold.AspNet.Templates.net9.BlazorCrud
             this.Write(this.ToStringHelper.ToStringWithCulture(primaryKeyName));
             this.Write(" == ");
             this.Write(this.ToStringHelper.ToStringWithCulture(primaryKeyNameLowerInv));
-            this.Write(");\r\n    }\r\n\r\n    public void Dispose() => persistingSubscription.Dispose();\r\n}\r\n");
+            this.Write(");\r\n    }\r\n\r\n    public void Dispose() => persistingSubscription?.Dispose();\r\n}\r\n");
             return this.GenerationEnvironment.ToString();
         }
         private global::Microsoft.VisualStudio.TextTemplating.ITextTemplatingEngineHost hostValue;

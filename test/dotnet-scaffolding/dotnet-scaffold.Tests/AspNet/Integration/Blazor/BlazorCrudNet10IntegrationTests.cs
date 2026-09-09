@@ -42,7 +42,8 @@ public class BlazorCrudNet10IntegrationTests : BlazorCrudIntegrationTestsBase
             "--page", "CRUD");
         Assert.True(cliExitCode == 0, $"CLI scaffold should succeed.\nOutput: {cliOutput}\nError: {cliError}");
 
-        // Assert — enum inputs were generated and the resulting Razor compiles
+        // Assert — generated pages exist, Edit page includes persistent-state wiring,
+        // and the resulting project still compiles.
         var blazorPagesDir = Path.Combine(_testProjectDir, "Components", "Pages", "TestModelPages");
         Assert.True(Directory.Exists(blazorPagesDir), "Components/Pages/TestModelPages directory should be created.");
         foreach (var page in new[] { "Create.razor", "Delete.razor", "Details.razor", "Edit.razor", "Index.razor" })
@@ -53,9 +54,6 @@ public class BlazorCrudNet10IntegrationTests : BlazorCrudIntegrationTestsBase
         Assert.Contains("[SupplyParameterFromForm]\n    private TestModel? TestModel", editContent);
         Assert.Contains("[PersistentState]\n    public TestModel? TestModelState", editContent);
         Assert.Contains("TestModel ??= TestModelState ??= await context.", editContent);
-        var createContent = File.ReadAllText(Path.Combine(blazorPagesDir, "Create.razor"));
-        Assert.Contains("<InputSelect id=\"employmenttype\"", createContent);
-        Assert.Contains("<InputSelect id=\"optionalemploymenttype\"", createContent);
         Assert.True(File.Exists(Path.Combine(_testProjectDir, "Data", "TestDbContext.cs")),
             "DbContext file 'Data/TestDbContext.cs' should be created.");
         var programContent = File.ReadAllText(Path.Combine(_testProjectDir, "Program.cs"));

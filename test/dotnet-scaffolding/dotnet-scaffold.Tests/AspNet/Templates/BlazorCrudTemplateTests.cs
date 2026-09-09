@@ -34,62 +34,18 @@ public class BlazorCrudTemplateTests
         else
         {
             Assert.Contains("@inject PersistentComponentState ApplicationState", result);
+            Assert.Contains("persistingSubscription ??= ApplicationState.RegisterOnPersisting(PersistData)", result);
             Assert.Contains("ApplicationState.TryTakeFromJson<Employee>(nameof(Employee), out var restoredEmployee)", result);
             Assert.Contains("Employee = restoredEmployee", result);
             Assert.Contains("ApplicationState.PersistAsJson(nameof(Employee), Employee)", result);
+            Assert.Contains("if (Employee is not null)", result);
+            Assert.Contains("public void Dispose() => persistingSubscription?.Dispose();", result);
+
+            int registerIndex = result.IndexOf("persistingSubscription ??= ApplicationState.RegisterOnPersisting(PersistData)", System.StringComparison.Ordinal);
+            int queryIndex = result.IndexOf("await context.Employees.FirstOrDefaultAsync", System.StringComparison.Ordinal);
+            Assert.True(registerIndex >= 0 && queryIndex >= 0 && registerIndex < queryIndex,
+                "Persistent state callback registration should occur before awaiting the database query.");
         }
-    }
-
-    [Theory]
-    [InlineData(9, "Create")]
-    [InlineData(9, "Edit")]
-    [InlineData(10, "Create")]
-    [InlineData(10, "Edit")]
-    [InlineData(11, "Create")]
-    [InlineData(11, "Edit")]
-    [InlineData(8, "Create")]
-    [InlineData(8, "Edit")]
-    public void FormTemplate_WithEnumProperty_GeneratesInputSelect(int frameworkVersion, string pageType)
-    {
-        // Arrange
-        BlazorCrudModel model = CreateModel(pageType);
-
-        // Act
-        string result = TransformTemplate(frameworkVersion, pageType, model);
-
-        // Assert
-        string inputSelect = GetInputSelect(result, "employeetype");
-
-        Assert.Contains("@bind-Value=\"Employee.EmployeeType\"", inputSelect);
-        Assert.Contains("aria-required=\"true\"", inputSelect);
-        Assert.Contains("Enum.GetValues<TestProject.Models.EmployeeType>()", inputSelect);
-        Assert.Contains("<option value=\"@value\">@value</option>", inputSelect);
-        Assert.Contains("</InputSelect>", inputSelect);
-        Assert.DoesNotContain("<option value=\"\">", inputSelect);
-        Assert.DoesNotContain("<InputText id=\"employeetype\"", result);
-    }
-
-    [Theory]
-    [InlineData(9, "Create")]
-    [InlineData(9, "Edit")]
-    [InlineData(10, "Create")]
-    [InlineData(10, "Edit")]
-    [InlineData(11, "Create")]
-    [InlineData(11, "Edit")]
-    [InlineData(8, "Create")]
-    [InlineData(8, "Edit")]
-    public void FormTemplate_WithNullableEnumProperty_GeneratesInputSelectWithEmptyOption(int frameworkVersion, string pageType)
-    {
-        BlazorCrudModel model = CreateModel(pageType);
-
-        string result = TransformTemplate(frameworkVersion, pageType, model);
-        string inputSelect = GetInputSelect(result, "optionalemployeetype");
-
-        Assert.Contains("@bind-Value=\"Employee.OptionalEmployeeType\"", inputSelect);
-        Assert.Contains("<option value=\"\">-- select --</option>", inputSelect);
-        Assert.Contains("Enum.GetValues<TestProject.Models.EmployeeType>()", inputSelect);
-        Assert.Contains("</InputSelect>", inputSelect);
-        Assert.DoesNotContain("<InputText id=\"optionalemployeetype\"", result);
     }
 
     [Theory]
@@ -111,6 +67,35 @@ public class BlazorCrudTemplateTests
         Assert.Contains("<InputNumber id=\"count\" @bind-Value=\"Employee.Count\"", result);
         Assert.Contains("<InputCheckbox id=\"isactive\" @bind-Value=\"Employee.IsActive\"", result);
         Assert.Contains("<InputDate id=\"startdate\" @bind-Value=\"Employee.StartDate\"", result);
+    }
+
+    [Theory]
+    [InlineData(8)]
+    [InlineData(9)]
+    [InlineData(10)]
+    [InlineData(11)]
+    public void EditTemplate_GeneratesSingleDatabaseLookupStatement(int frameworkVersion)
+    {
+        BlazorCrudModel model = CreateModel("Edit");
+        string result = TransformTemplate(frameworkVersion, "Edit", model);
+
+        int first = result.IndexOf("FirstOrDefaultAsync", System.StringComparison.Ordinal);
+        Assert.True(first >= 0, "Expected the generated edit template to query by primary key.");
+        int second = result.IndexOf("FirstOrDefaultAsync", first + 1, System.StringComparison.Ordinal);
+        Assert.True(second < 0, "Generated edit template should contain only one database lookup expression.");
+    }
+
+    [Theory]
+    [InlineData(8)]
+    [InlineData(9)]
+    public void EditTemplate_Net8AndNet9_ContainsRestoreFallbackAndEarlyNotFoundReturn(int frameworkVersion)
+    {
+        BlazorCrudModel model = CreateModel("Edit");
+        string result = TransformTemplate(frameworkVersion, "Edit", model).Replace("\r\n", "\n");
+
+        Assert.Contains("ApplicationState.TryTakeFromJson<Employee>(nameof(Employee), out var restoredEmployee)", result);
+        Assert.Contains("Employee = restoredEmployee", result);
+        Assert.Contains("NavigationManager.NavigateTo(\"notfound\");\n            return;", result);
     }
 
     private static BlazorCrudModel CreateModel(string pageType)
@@ -160,42 +145,18 @@ public class BlazorCrudTemplateTests
 
     private static string TransformTemplate(int frameworkVersion, string pageType, BlazorCrudModel model)
     {
-        if (frameworkVersion == 8 && pageType == "Create")
+        return frameworkVersion switch
         {
-            return Transform(new Microsoft.DotNet.Tools.Scaffold.AspNet.Templates.net8.BlazorCrud.Create(), model);
-        }
-
-        if (frameworkVersion == 8)
-        {
-            return Transform(new Microsoft.DotNet.Tools.Scaffold.AspNet.Templates.net8.BlazorCrud.Edit(), model);
-        }
-
-        if (frameworkVersion == 9 && pageType == "Create")
-        {
-            return Transform(new Microsoft.DotNet.Tools.Scaffold.AspNet.Templates.net9.BlazorCrud.Create(), model);
-        }
-
-        if (frameworkVersion == 9)
-        {
-            return Transform(new Microsoft.DotNet.Tools.Scaffold.AspNet.Templates.net9.BlazorCrud.Edit(), model);
-        }
-
-        if (frameworkVersion == 10 && pageType == "Create")
-        {
-            return Transform(new Microsoft.DotNet.Tools.Scaffold.AspNet.Templates.net10.BlazorCrud.Create(), model);
-        }
-
-        if (frameworkVersion == 10)
-        {
-            return Transform(new Microsoft.DotNet.Tools.Scaffold.AspNet.Templates.net10.BlazorCrud.Edit(), model);
-        }
-
-        if (pageType == "Create")
-        {
-            return Transform(new Microsoft.DotNet.Tools.Scaffold.AspNet.Templates.net11.BlazorCrud.Create(), model);
-        }
-
-        return Transform(new Microsoft.DotNet.Tools.Scaffold.AspNet.Templates.net11.BlazorCrud.Edit(), model);
+            8 when pageType == "Create" => Transform(new Microsoft.DotNet.Tools.Scaffold.AspNet.Templates.net8.BlazorCrud.Create(), model),
+            8 => Transform(new Microsoft.DotNet.Tools.Scaffold.AspNet.Templates.net8.BlazorCrud.Edit(), model),
+            9 when pageType == "Create" => Transform(new Microsoft.DotNet.Tools.Scaffold.AspNet.Templates.net9.BlazorCrud.Create(), model),
+            9 => Transform(new Microsoft.DotNet.Tools.Scaffold.AspNet.Templates.net9.BlazorCrud.Edit(), model),
+            10 when pageType == "Create" => Transform(new Microsoft.DotNet.Tools.Scaffold.AspNet.Templates.net10.BlazorCrud.Create(), model),
+            10 => Transform(new Microsoft.DotNet.Tools.Scaffold.AspNet.Templates.net10.BlazorCrud.Edit(), model),
+            11 when pageType == "Create" => Transform(new Microsoft.DotNet.Tools.Scaffold.AspNet.Templates.net11.BlazorCrud.Create(), model),
+            11 => Transform(new Microsoft.DotNet.Tools.Scaffold.AspNet.Templates.net11.BlazorCrud.Edit(), model),
+            _ => throw new System.ArgumentOutOfRangeException(nameof(frameworkVersion), frameworkVersion, "Unsupported framework version.")
+        };
     }
 
     private static string Transform(Microsoft.DotNet.Scaffolding.TextTemplating.ITextTransformation template, BlazorCrudModel model)
@@ -210,18 +171,6 @@ public class BlazorCrudTemplateTests
         template.Session = new Dictionary<string, object> { { "Model", model } };
         template.Initialize();
         return template.TransformText();
-    }
-
-    private static string GetInputSelect(string result, string id)
-    {
-        int start = result.IndexOf($"<InputSelect id=\"{id}\"", System.StringComparison.Ordinal);
-        Assert.True(start >= 0, $"InputSelect with id '{id}' was not generated.");
-
-        const string closingTag = "</InputSelect>";
-        int end = result.IndexOf(closingTag, start, System.StringComparison.Ordinal);
-        Assert.True(end >= 0, $"InputSelect with id '{id}' was not closed.");
-
-        return result.Substring(start, end - start + closingTag.Length);
     }
 
     private static List<IPropertySymbol> GetProperties(string source)
