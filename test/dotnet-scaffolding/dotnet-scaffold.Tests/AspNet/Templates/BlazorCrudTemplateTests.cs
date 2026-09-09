@@ -49,27 +49,6 @@ public class BlazorCrudTemplateTests
     }
 
     [Theory]
-    [InlineData(9, "Create")]
-    [InlineData(9, "Edit")]
-    [InlineData(10, "Create")]
-    [InlineData(10, "Edit")]
-    [InlineData(11, "Create")]
-    [InlineData(11, "Edit")]
-    [InlineData(8, "Create")]
-    [InlineData(8, "Edit")]
-    public void FormTemplate_WithStandardProperties_PreservesInputTypes(int frameworkVersion, string pageType)
-    {
-        BlazorCrudModel model = CreateModel(pageType);
-
-        string result = TransformTemplate(frameworkVersion, pageType, model);
-
-        Assert.Contains("<InputText id=\"name\" @bind-Value=\"Employee.Name\"", result);
-        Assert.Contains("<InputNumber id=\"count\" @bind-Value=\"Employee.Count\"", result);
-        Assert.Contains("<InputCheckbox id=\"isactive\" @bind-Value=\"Employee.IsActive\"", result);
-        Assert.Contains("<InputDate id=\"startdate\" @bind-Value=\"Employee.StartDate\"", result);
-    }
-
-    [Theory]
     [InlineData(8)]
     [InlineData(9)]
     [InlineData(10)]

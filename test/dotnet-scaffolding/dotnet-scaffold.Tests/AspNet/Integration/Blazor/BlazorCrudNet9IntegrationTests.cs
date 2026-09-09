@@ -61,14 +61,11 @@ public class BlazorCrudNet9IntegrationTests : BlazorCrudIntegrationTestsBase
         var programContent = File.ReadAllText(Path.Combine(_testProjectDir, "Program.cs"));
         Assert.Contains("TestDbContext", programContent);
 
-        // Post-scaffolding build verification — only if scaffolding did not
-        // produce NuGet compatibility errors (the tool may select package versions
-        // that are incompatible with older TFMs)
+        // Post-scaffolding build verification
         var combinedOutput = cliOutput + cliError;
-        if (!combinedOutput.Contains("error: NU"))
-        {
-            var (afterExitCode, _, afterError) = await RunBuildAsync(_testProjectDir);
-            Assert.True(afterExitCode == 0, $"Project should still build after scaffolding. Error: {afterError}");
-        }
+        Assert.False(combinedOutput.Contains("error: NU"),
+            $"Scaffolding should not produce NuGet errors for {TargetFramework}.\nOutput: {cliOutput}\nError: {cliError}");
+        var (afterExitCode, _, afterError) = await RunBuildAsync(_testProjectDir);
+        Assert.True(afterExitCode == 0, $"Project should still build after scaffolding. Error: {afterError}");
     }
 }

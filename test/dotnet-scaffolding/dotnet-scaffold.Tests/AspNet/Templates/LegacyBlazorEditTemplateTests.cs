@@ -55,7 +55,27 @@ public class LegacyBlazorEditTemplateTests
     private static string GetRepoRoot()
     {
         var assemblyLocation = Assembly.GetExecutingAssembly().Location;
-        var assemblyDirectory = Path.GetDirectoryName(assemblyLocation)!;
-        return Path.GetFullPath(Path.Combine(assemblyDirectory, "..", "..", "..", "..", ".."));
+        var current = new DirectoryInfo(Path.GetDirectoryName(assemblyLocation)!);
+
+        while (current is not null)
+        {
+            var candidate = Path.Combine(
+                current.FullName,
+                "src",
+                "Scaffolding",
+                "VS.Web.CG.Mvc",
+                "Templates",
+                "Blazor",
+                "Edit.tt");
+
+            if (File.Exists(candidate))
+            {
+                return current.FullName;
+            }
+
+            current = current.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate repository root from test assembly path.");
     }
 }

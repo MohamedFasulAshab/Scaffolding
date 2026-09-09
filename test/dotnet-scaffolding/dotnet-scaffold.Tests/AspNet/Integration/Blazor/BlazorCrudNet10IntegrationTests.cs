@@ -59,14 +59,14 @@ public class BlazorCrudNet10IntegrationTests : BlazorCrudIntegrationTestsBase
         var programContent = File.ReadAllText(Path.Combine(_testProjectDir, "Program.cs"));
         Assert.Contains("TestDbContext", programContent);
 
-            // Assert no NuGet errors during scaffolding
-            Assert.False(cliOutput.Contains("error: NU"),
-                $"Scaffolding should not produce NuGet errors for {TargetFramework}.\nOutput: {cliOutput}");
-            Assert.False(cliOutput.Contains("Failed"),
-                $"Scaffolding should not contain failures for {TargetFramework}.\nOutput: {cliOutput}");
+        // Assert no NuGet errors during scaffolding
+        Assert.False(cliOutput.Contains("error: NU"),
+            $"Scaffolding should not produce NuGet errors for {TargetFramework}.\nOutput: {cliOutput}");
+        Assert.False(cliOutput.Contains("Failed"),
+            $"Scaffolding should not contain failures for {TargetFramework}.\nOutput: {cliOutput}");
 
-            // Verify project builds after scaffolding
-            var (afterExitCode, _, afterError) = await RunBuildAsync(_testProjectDir);
-            Assert.True(afterExitCode == 0, $"Project should still build after scaffolding. Error: {afterError}");        
+        // Verify project builds after scaffolding
+        var (afterExitCode, _, afterError) = await RunBuildAsync(_testProjectDir);
+        Assert.True(afterExitCode == 0, $"Project should still build after scaffolding. Error: {afterError}");
     }
 }
