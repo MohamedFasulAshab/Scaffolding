@@ -37,6 +37,17 @@
                     },
                     {
                       "InsertBefore": [ "app.MapRazorComponents<App>()" ],
+                      "MultiLineBlock": [
+                        "// Required until AzureAD/microsoft-identity-web#4057 is fixed; remove with dotnet/Scaffolding#3859.",
+                        "app.UseAntiforgery()"
+                      ],
+                      "CheckBlock": "app.UseAntiforgery()",
+                      "LeadingTrivia": {
+                        "Newline": true
+                      }
+                    },
+                    {
+                      "InsertBefore": [ "app.MapRazorComponents<App>()" ],
                       "Block": "app.MapGroup(\"/authentication\").MapLoginAndLogout()",
                       "LeadingTrivia": {
                         "Newline": true
@@ -80,6 +91,21 @@
                         "                    @context.User.Identity?.Name",
                         "                </Authorized>",
                         "            </AuthorizeView>"
+                    ]
+                }
+            ]
+        },
+        {
+            "FileName": "Components\\Layout\\NavMenu.razor",
+            "Replacements": [
+                {
+                    "CheckBlock": "<LoginOrLogout />",
+                    "ReplaceSnippet": [
+                        "    </nav>"
+                    ],
+                    "MultiLineBlock": [
+                        "        <LoginOrLogout />",
+                        "    </nav>"
                     ]
                 }
             ]

@@ -104,6 +104,35 @@ public class EntraIdHelperTests
     }
 
     [Fact]
+    public void GetTextTemplatingProperties_WithLoginOrLogout_UsesServerLayout()
+    {
+        List<string> templatePaths = [Path.Combine("BlazorEntraId", "LoginOrLogout.tt")];
+        EntraIdModel entraIdModel = CreateTestEntraIdModel();
+
+        TextTemplatingProperty property = Assert.Single(
+            EntraIdHelper.GetTextTemplatingProperties(templatePaths, entraIdModel));
+
+        Assert.Equal(
+            Path.Combine("output", "Components", "Layout", "LoginOrLogout.razor"),
+            property.OutputPath);
+    }
+
+    [Fact]
+    public void GetTextTemplatingProperties_WithBlazorWasmClient_UsesClientLayout()
+    {
+        List<string> templatePaths = [Path.Combine("BlazorEntraId", "LoginOrLogout.tt")];
+        EntraIdModel entraIdModel = CreateTestEntraIdModel();
+        string clientProjectPath = Path.Combine("output", "TestProject.Client", "TestProject.Client.csproj");
+
+        TextTemplatingProperty property = Assert.Single(
+            EntraIdHelper.GetTextTemplatingProperties(templatePaths, entraIdModel, clientProjectPath));
+
+        Assert.Equal(
+            Path.Combine("output", "TestProject.Client", "Layout", "LoginOrLogout.razor"),
+            property.OutputPath);
+    }
+
+    [Fact]
     public void GetTextTemplatingProperties_WithoutLoginOrPrefix_UsesCsExtension()
     {
         // Arrange

@@ -17,8 +17,12 @@ internal static class EntraIdHelper
     /// </summary>
     /// <param name="allT4TemplatePaths">The collection of all T4 template paths.</param>
     /// <param name="entraIdModel">The Entra ID model containing configuration and data.</param>
+    /// <param name="blazorWasmClientProjectPath">The client project path for WebAssembly and Auto applications, when present.</param>
     /// <returns>An enumerable collection of <see cref="TextTemplatingProperty"/> instances.</returns>
-    internal static IEnumerable<TextTemplatingProperty> GetTextTemplatingProperties(IEnumerable<string> allT4TemplatePaths, EntraIdModel entraIdModel)
+    internal static IEnumerable<TextTemplatingProperty> GetTextTemplatingProperties(
+        IEnumerable<string> allT4TemplatePaths,
+        EntraIdModel entraIdModel,
+        string? blazorWasmClientProjectPath = null)
     {
         var textTemplatingProperties = new List<TextTemplatingProperty>();
         var templateTypes = GetBlazorEntraIdTemplateTypes(entraIdModel.ProjectInfo?.LowestSupportedTargetFramework);
@@ -35,7 +39,9 @@ internal static class EntraIdHelper
             if (!string.IsNullOrEmpty(templatePath) && templateType is not null && !string.IsNullOrEmpty(projectName))
             {
                 string extension = templateFullName.StartsWith("loginor", StringComparison.OrdinalIgnoreCase) ? ".razor" : ".cs";
-                string templateNameWithNamespace = String.Equals(extension, ".razor") ? Path.Combine(entraIdModel.BaseOutputPath ?? "", "Components", "Layout") : (entraIdModel.BaseOutputPath ?? "");
+                string templateNameWithNamespace = String.Equals(extension, ".razor")
+                    ? GetLayoutOutputPath(entraIdModel.BaseOutputPath, blazorWasmClientProjectPath)
+                    : (entraIdModel.BaseOutputPath ?? "");
                 string outputFileName = Path.Combine(templateNameWithNamespace, templateFullName + extension);
 
                 textTemplatingProperties.Add(new()
@@ -50,6 +56,16 @@ internal static class EntraIdHelper
         }
 
         return textTemplatingProperties;
+    }
+
+    private static string GetLayoutOutputPath(string? baseOutputPath, string? blazorWasmClientProjectPath)
+    {
+        if (!string.IsNullOrEmpty(blazorWasmClientProjectPath))
+        {
+            return Path.Combine(Path.GetDirectoryName(blazorWasmClientProjectPath) ?? string.Empty, "Layout");
+        }
+
+        return Path.Combine(baseOutputPath ?? string.Empty, "Components", "Layout");
     }
 
     /// <summary>

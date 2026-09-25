@@ -8,6 +8,7 @@ using System.IO;
 using Microsoft.DotNet.Tools.Scaffold.Tests.Helpers;
 using System.Linq;
 using System.Reflection;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.DotNet.Scaffolding.Core.Scaffolders;
@@ -257,6 +258,45 @@ public abstract class EntraIdIntegrationTestsBase : IDisposable
             $"blazorWasmEntraChanges.json should exist for {TargetFramework}");
     }
 
+    [Fact]
+    public void BlazorEntraChangesConfig_AddsLoginOrLogoutToServerNavigation()
+    {
+        using var config = LoadCodeModificationConfig("blazorEntraChanges.json");
+        JsonElement navMenu = Assert.Single(
+            config.RootElement.GetProperty("Files").EnumerateArray(),
+            file => file.GetProperty("FileName").GetString() == @"Components\Layout\NavMenu.razor");
+
+        Assert.Contains(
+            navMenu.GetProperty("Replacements").EnumerateArray(),
+            replacement => replacement.GetProperty("CheckBlock").GetString() == "<LoginOrLogout />");
+    }
+
+    [Fact]
+    public void BlazorWasmEntraChangesConfig_AddsLoginOrLogoutToClientNavigation()
+    {
+        using var config = LoadCodeModificationConfig("blazorWasmEntraChanges.json");
+        JsonElement navMenu = Assert.Single(
+            config.RootElement.GetProperty("Files").EnumerateArray(),
+            file => file.GetProperty("FileName").GetString() == @"Layout\NavMenu.razor");
+
+        Assert.Contains(
+            navMenu.GetProperty("Replacements").EnumerateArray(),
+            replacement => replacement.GetProperty("CheckBlock").GetString() == "<LoginOrLogout />");
+    }
+
+    [Fact]
+    public void BlazorEntraChangesConfig_PreservesAntiforgeryProtection()
+    {
+        using var config = LoadCodeModificationConfig("blazorEntraChanges.json");
+        string configJson = config.RootElement.GetRawText();
+
+        Assert.Contains("MapLoginAndLogout", configJson);
+        if (TargetFramework == "net11.0")
+        {
+            Assert.Contains("app.UseAntiforgery()", configJson);
+        }
+    }
+
     #endregion
 
     #region Validation Combination Tests
@@ -314,6 +354,12 @@ public abstract class EntraIdIntegrationTestsBase : IDisposable
         var assemblyDirectory = Path.GetDirectoryName(assemblyLocation);
         var basePath = Path.Combine(assemblyDirectory!, "..", "..", "..", "..", "..", "src", "dotnet-scaffolding", "dotnet-scaffold", "AspNet", "Templates");
         return Path.GetFullPath(basePath);
+    }
+
+    private JsonDocument LoadCodeModificationConfig(string fileName)
+    {
+        string configPath = Path.Combine(GetActualTemplatesBasePath(), TargetFramework, "CodeModificationConfigs", fileName);
+        return JsonDocument.Parse(File.ReadAllText(configPath));
     }
 
     protected Task<(int ExitCode, string Output, string Error)> RunBuildAsync(string workingDirectory)
