@@ -26,6 +26,11 @@ namespace Microsoft.DotNet.Scaffolding.Shared.ProjectModel
         public string AssemblyName { get; set; }
 
         /// <summary>
+        /// Root namespace for the project reference.
+        /// </summary>
+        public string RootNamespace { get; set; }
+
+        /// <summary>
         /// Items included in the project reference for compilation
         /// &lt;Compile Include="" /&gt;
         /// </summary>

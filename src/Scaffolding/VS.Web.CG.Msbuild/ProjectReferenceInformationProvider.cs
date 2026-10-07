@@ -92,11 +92,13 @@ namespace Microsoft.VisualStudio.Web.CodeGeneration.Msbuild
             var assemblyName = string.IsNullOrEmpty(assemblyPath)
                 ? name
                 : Path.GetFileNameWithoutExtension(assemblyPath);
+            var rootNamespace = project.GetPropertyValue("RootNamespace");
 
             return new ProjectReferenceInformation()
             {
                 ProjectName = name,
                 AssemblyName = assemblyName,
+                RootNamespace = string.IsNullOrEmpty(rootNamespace) ? name : rootNamespace,
                 CompilationItems = compileItems.ToList(),
                 FullPath = fullPath
             };
