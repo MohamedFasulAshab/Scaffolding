@@ -86,6 +86,42 @@ namespace Microsoft.VisualStudio.Web.CodeGenerators.Mvc {
                 return ResourceManager.GetString("AdditionalStepsRequired", resourceCulture);
             }
         }
+
+        /// <summary>
+        ///   Looks up a localized string similar to Multiple directly referenced projects contain the Blazor Identity modification file &apos;{0}&apos;: {1}. Keep the file in the target project or ensure that only one directly referenced project contains it..
+        /// </summary>
+        internal static string BlazorIdentityFileAmbiguous {
+            get {
+                return ResourceManager.GetString("BlazorIdentityFileAmbiguous", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Looks up a localized string similar to The required Blazor Identity modification file &apos;{0}&apos; was found in referenced project &apos;{1}&apos;, but generated Identity components belong to target project &apos;{2}&apos;. This project layout is not currently supported because modifying the referenced file would create invalid cross-project component references. No files were generated..
+        /// </summary>
+        internal static string BlazorIdentityFileInReferencedProjectNotSupported {
+            get {
+                return ResourceManager.GetString("BlazorIdentityFileInReferencedProjectNotSupported", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Looks up a localized string similar to Could not find the required Blazor Identity modification file &apos;{0}&apos; in the target project &apos;{1}&apos; or any directly referenced project..
+        /// </summary>
+        internal static string BlazorIdentityRequiredFileNotFound {
+            get {
+                return ResourceManager.GetString("BlazorIdentityRequiredFileNotFound", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Looks up a localized string similar to Could not find the target project &apos;{0}&apos; in the current workspace..
+        /// </summary>
+        internal static string BlazorIdentityTargetProjectNotFound {
+            get {
+                return ResourceManager.GetString("BlazorIdentityTargetProjectNotFound", resourceCulture);
+            }
+        }
         
         /// <summary>
         ///   Looks up a localized string similar to Checkout the &apos;{0}&apos; file that got generated..

@@ -159,6 +159,18 @@
   <data name="InstallPackagesForScaffoldingIdentity" xml:space="preserve">
     <value>Install the following packages to your project for scaffolding identity: {0}</value>
   </data>
+  <data name="BlazorIdentityFileAmbiguous" xml:space="preserve">
+    <value>Multiple directly referenced projects contain the Blazor Identity modification file '{0}': {1}. Keep the file in the target project or ensure that only one directly referenced project contains it.</value>
+  </data>
+  <data name="BlazorIdentityFileInReferencedProjectNotSupported" xml:space="preserve">
+    <value>The required Blazor Identity modification file '{0}' was found in referenced project '{1}', but generated Identity components belong to target project '{2}'. This project layout is not currently supported because modifying the referenced file would create invalid cross-project component references. No files were generated.</value>
+  </data>
+  <data name="BlazorIdentityRequiredFileNotFound" xml:space="preserve">
+    <value>Could not find the required Blazor Identity modification file '{0}' in the target project '{1}' or any directly referenced project.</value>
+  </data>
+  <data name="BlazorIdentityTargetProjectNotFound" xml:space="preserve">
+    <value>Could not find the target project '{0}' in the current workspace.</value>
+  </data>
   <data name="InstallPackageMessage" xml:space="preserve">
     <value>Install the following packages to your project:</value>
   </data>

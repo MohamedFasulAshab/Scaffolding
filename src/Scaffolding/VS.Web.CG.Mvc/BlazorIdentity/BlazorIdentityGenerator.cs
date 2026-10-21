@@ -43,6 +43,8 @@ namespace Microsoft.VisualStudio.Web.CodeGenerators.Mvc.Blazor
         private ICodeGenAssemblyLoadContext AssemblyLoadContextLoader { get; set; }
         private const string Main = nameof(Main);
         private bool CalledFromCommandline => !(FileSystem is SimulationModeFileSystem);
+        private CodeModifierConfig _blazorIdentityChanges;
+        private IReadOnlyDictionary<string, Document> _documentsToModify;
 
         private IEnumerable<string> _templateFolders;
         //Folders where the .tt templates for Blazor Identity scenario live. Should be in VS.Web.CG.Mvc\Templates\BlazorIdentity
@@ -146,6 +148,7 @@ namespace Microsoft.VisualStudio.Web.CodeGenerators.Mvc.Blazor
             }
 
             var blazorTemplateModel = await ValidateAndBuild(model);
+            PrepareFileModifications();
             ExecuteTemplates(blazorTemplateModel);
             AddStaticFiles(blazorTemplateModel);
             AddReadmeFile(blazorTemplateModel.BaseOutputPath);
@@ -365,30 +368,17 @@ namespace Microsoft.VisualStudio.Web.CodeGenerators.Mvc.Blazor
 
         internal async Task ModifyFilesAsync(BlazorIdentityModel blazorIdentityModel)
         {
-            var assembly = Assembly.GetExecutingAssembly();
-            var resourceName = "blazorIdentityChanges.json";
-            var jsonText = ProjectModelHelper.GetManifestResource(assembly, resourceName);
-            CodeModifierConfig minimalApiChangesConfig = null;
-            try
-            {
-                minimalApiChangesConfig = JsonSerializer.Deserialize<CodeModifierConfig>(jsonText);
-            }
-            catch (JsonException ex)
-            {
-                Logger.LogMessage($"Error deserializing {resourceName}. {ex.Message}");
-            }
+            PrepareFileModifications();
 
             //Getting Program.cs document
-            var programCsFile = minimalApiChangesConfig.Files.FirstOrDefault(x => x.FileName.Equals("Program.cs", StringComparison.OrdinalIgnoreCase));
+            var programCsFile = _blazorIdentityChanges.Files.FirstOrDefault(x => x.FileName.Equals("Program.cs", StringComparison.OrdinalIgnoreCase));
             await ModifyProgramCsAsync(programCsFile, blazorIdentityModel);
 
             //Modify all other non .cs files
-            var otherFiles = minimalApiChangesConfig.Files.Where(x => !x.FileName.EndsWith(".cs", StringComparison.OrdinalIgnoreCase));
-            var projectPath = Path.GetDirectoryName(ProjectContext.ProjectFullPath);
-            var project = Workspace.CurrentSolution.Projects.FirstOrDefault(p => p.AssemblyName.Equals(ProjectContext.AssemblyName, StringComparison.OrdinalIgnoreCase));
+            var otherFiles = _blazorIdentityChanges.Files.Where(x => !x.FileName.EndsWith(".cs", StringComparison.OrdinalIgnoreCase));
             foreach (var file in otherFiles)
             {
-                var fileDoc = project.GetDocumentFromName(file.FileName, FileSystem);
+                var fileDoc = _documentsToModify[file.FileName];
                 await DocumentBuilder.ApplyTextReplacements(file, fileDoc, new CodeChangeOptions(), FileSystem);
                 if (file.FileName.Equals("Routes.razor", StringComparison.OrdinalIgnoreCase) &&
                     FileSystem.FileExists(fileDoc.Name))
@@ -403,6 +393,143 @@ namespace Microsoft.VisualStudio.Web.CodeGenerators.Mvc.Blazor
                     }
                 }
             }
+        }
+
+        private void PrepareFileModifications()
+        {
+            if (_blazorIdentityChanges is not null && _documentsToModify is not null)
+            {
+                return;
+            }
+
+            var resourceName = "blazorIdentityChanges.json";
+            var jsonText = ProjectModelHelper.GetManifestResource(Assembly.GetExecutingAssembly(), resourceName);
+            try
+            {
+                _blazorIdentityChanges = JsonSerializer.Deserialize<CodeModifierConfig>(jsonText);
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidOperationException($"Error deserializing {resourceName}. {ex.Message}", ex);
+            }
+
+            if (_blazorIdentityChanges?.Files is null)
+            {
+                throw new InvalidOperationException($"Could not load Blazor Identity changes from {resourceName}.");
+            }
+
+            var project = Workspace.CurrentSolution.Projects.FirstOrDefault(
+                p => p.AssemblyName.Equals(ProjectContext.AssemblyName, StringComparison.OrdinalIgnoreCase));
+            if (project is null)
+            {
+                throw new InvalidOperationException(
+                    string.Format(MessageStrings.BlazorIdentityTargetProjectNotFound, ProjectContext.AssemblyName));
+            }
+
+            var documentsToModify = new Dictionary<string, Document>(StringComparer.OrdinalIgnoreCase);
+            var nonCodeFiles = _blazorIdentityChanges.Files.Where(
+                file => !file.FileName.EndsWith(".cs", StringComparison.OrdinalIgnoreCase));
+            foreach (var file in nonCodeFiles)
+            {
+                var required = file.FileName.Equals("Routes.razor", StringComparison.OrdinalIgnoreCase);
+                documentsToModify[file.FileName] = ResolveDocumentToModify(
+                    project,
+                    file.FileName,
+                    FileSystem,
+                    ProjectContext.ProjectReferenceInformation,
+                    ProjectContext.ProjectReferences,
+                    required);
+            }
+
+            _documentsToModify = documentsToModify;
+        }
+
+        internal static Document ResolveDocumentToModify(
+            Microsoft.CodeAnalysis.Project targetProject,
+            string fileName,
+            IFileSystem fileSystem,
+            IEnumerable<ProjectReferenceInformation> projectReferenceInformation,
+            IEnumerable<string> directProjectReferences,
+            bool required)
+        {
+            ArgumentNullException.ThrowIfNull(targetProject);
+
+            var targetDocument = targetProject.GetDocumentFromName(fileName, fileSystem);
+            if (targetDocument is not null)
+            {
+                return targetDocument;
+            }
+
+            if (!required)
+            {
+                return null;
+            }
+
+            var targetProjectDirectory = Path.GetDirectoryName(targetProject.FilePath);
+            var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+            var directReferencePaths = new HashSet<string>(
+                (directProjectReferences ?? Enumerable.Empty<string>())
+                    .Where(path => !string.IsNullOrWhiteSpace(path))
+                    .Select(path => NormalizeProjectPath(path, targetProjectDirectory)),
+                pathComparer);
+
+            var candidateDocuments = new List<Document>();
+            foreach (var projectReference in projectReferenceInformation ?? Enumerable.Empty<ProjectReferenceInformation>())
+            {
+                if (string.IsNullOrWhiteSpace(projectReference.FullPath))
+                {
+                    continue;
+                }
+
+                var projectPath = NormalizeProjectPath(projectReference.FullPath, targetProjectDirectory);
+                if (!directReferencePaths.Contains(projectPath))
+                {
+                    continue;
+                }
+
+                var referencedProject = targetProject.Solution.Projects.FirstOrDefault(
+                    project => !string.IsNullOrEmpty(project.FilePath) &&
+                        pathComparer.Equals(Path.GetFullPath(project.FilePath), projectPath));
+                var document = referencedProject.GetDocumentFromName(fileName, fileSystem);
+                if (document is not null)
+                {
+                    candidateDocuments.Add(document);
+                }
+            }
+
+            var distinctCandidates = candidateDocuments
+                .GroupBy(document => Path.GetFullPath(document.Name), pathComparer)
+                .Select(group => group.First())
+                .ToList();
+            if (distinctCandidates.Count == 1)
+            {
+                throw new InvalidOperationException(
+                    string.Format(
+                        MessageStrings.BlazorIdentityFileInReferencedProjectNotSupported,
+                        fileName,
+                        distinctCandidates[0].Project.FilePath,
+                        targetProject.FilePath));
+            }
+
+            if (distinctCandidates.Count > 1)
+            {
+                var projectPaths = string.Join(
+                    ", ",
+                    distinctCandidates.Select(document => document.Project.FilePath).OrderBy(path => path, pathComparer));
+                throw new InvalidOperationException(
+                    string.Format(MessageStrings.BlazorIdentityFileAmbiguous, fileName, projectPaths));
+            }
+
+            throw new InvalidOperationException(
+                string.Format(MessageStrings.BlazorIdentityRequiredFileNotFound, fileName, targetProject.FilePath));
+        }
+
+        private static string NormalizeProjectPath(string projectPath, string basePath)
+        {
+            return Path.GetFullPath(
+                Path.IsPathRooted(projectPath)
+                    ? projectPath
+                    : Path.Combine(basePath, projectPath));
         }
 
         internal async Task ModifyProgramCsAsync(CodeFile programCsFile, BlazorIdentityModel blazorIdentityModel)
