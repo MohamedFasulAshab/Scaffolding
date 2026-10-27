@@ -83,7 +83,7 @@ public enum EmploymentType
         Assert.True(File.Exists(Path.Combine(_testProjectDir, "Data", "TestDbContext.cs")),
             "DbContext file 'Data/TestDbContext.cs' should be created.");
         var programContent = File.ReadAllText(Path.Combine(_testProjectDir, "Program.cs"));
-        Assert.Contains("TestDbContext", programContent);
+        Assert.Contains("builder.Services.AddDbContextFactory<TestDbContext>(options => options.UseSqlite(connectionString));", programContent);
 
         // Assert no NuGet errors during scaffolding
         var combinedOutput = cliOutput + cliError;
