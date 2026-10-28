@@ -2,9 +2,9 @@ using BlazorWebApp.Components;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
-var connectionString = builder.Configuration.GetConnectionString("ApplicationDbContext") ?? throw new InvalidOperationException("Connection string 'ApplicationDbContext' not found.");
+var ApplicationDbContextConnectionString = builder.Configuration.GetConnectionString("ApplicationDbContext") ?? throw new InvalidOperationException("Connection string 'ApplicationDbContext' not found.");
 
-builder.Services.AddDbContextFactory<ApplicationDbContext>(options => options.UseSqlite(connectionString));
+builder.Services.AddDbContextFactory<ApplicationDbContext>(options => options.UseSqlite(ApplicationDbContextConnectionString));
 
 builder.Services.AddQuickGridEntityFrameworkAdapter();
 

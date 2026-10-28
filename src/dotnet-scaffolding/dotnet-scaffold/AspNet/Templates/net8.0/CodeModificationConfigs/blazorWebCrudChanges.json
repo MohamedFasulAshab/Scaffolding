@@ -6,6 +6,19 @@
         "Global": {
           "CodeChanges": [
             {
+              "InsertAfter": "WebApplication.CreateBuilder",
+              "CheckBlock": "builder.Configuration.GetConnectionString(\"$(ConnectionStringName)\")",
+              "Block": "\nvar $(DbContextName)ConnectionString = builder.Configuration.GetConnectionString(\"$(ConnectionStringName)\") ?? throw new InvalidOperationException(\"Connection string '$(ConnectionStringName)' not found.\")"
+            },
+            {
+              "InsertAfter": "builder.Configuration.GetConnectionString(\"$(ConnectionStringName)\")",
+              "CheckBlock": "builder.Services.AddDbContextFactory<$(DbContextName)>",
+              "Block": "builder.Services.AddDbContextFactory<$(DbContextName)>(options => options.$(UseDbMethod)($(DbContextName)ConnectionString))",
+              "LeadingTrivia": {
+                "Newline": true
+              }
+            },
+            {
               "InsertAfter": "WebApplication.CreateBuilder.Services.AddDbContext",
               "Block": "WebApplication.CreateBuilder.Services.AddQuickGridEntityFrameworkAdapter()",
               "LeadingTrivia": {
