@@ -121,7 +121,9 @@ namespace Microsoft.DotNet.Scaffolding.Shared.ProjectModel
         IEnumerable<ResolvedReference> CompilationAssemblies { get; }
 
         /// <summary>
-        /// Paths to project references (direct and indirect) of the project.
+        /// Paths to the project's direct project references that contribute to its compilation.
+        /// References with ReferenceOutputAssembly="false" and transitive references added by the SDK are excluded.
+        /// The full reference graph is available through <see cref="ProjectReferenceInformation"/>.
         /// </summary>
         IEnumerable<string> ProjectReferences { get; }
 

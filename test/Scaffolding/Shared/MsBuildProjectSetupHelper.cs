@@ -97,6 +97,12 @@ namespace Microsoft.VisualStudio.Web.CodeGeneration
                 $"{MsBuildProjectStrings.LibraryProjectFolder}/_Imports.razor",
                 "@namespace Custom.Library.Root");
             fileProvider.Add($"{MsBuildProjectStrings.LibraryProjectFolder}/Layout/MainLayout.razor", "<main />");
+            // Transitive (Theme) and build-only (BuildOnly) Razor projects also expose a conventional MainLayout.
+            // If either leaked into layout resolution, the resolver would report an ambiguity instead of the Library layout.
+            Directory.CreateDirectory(Path.Combine(themePath, "Layout"));
+            Directory.CreateDirectory(Path.Combine(buildOnlyPath, "Layout"));
+            fileProvider.Add($"{MsBuildProjectStrings.ThemeProjectFolder}/Layout/MainLayout.razor", "<main />");
+            fileProvider.Add($"{MsBuildProjectStrings.BuildOnlyProjectFolder}/Layout/MainLayout.razor", "<main />");
 
             RestoreAndBuild(fileProvider.Root, outputHelper, $"{MsBuildProjectStrings.RootProjectFolder}/{MsBuildProjectStrings.RootProjectName}");
         }
