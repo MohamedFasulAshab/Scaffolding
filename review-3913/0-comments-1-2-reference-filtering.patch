@@ -1,0 +1,32 @@
+diff --git a/src/Shared/Microsoft.DotNet.Scaffolding.Shared/ProjectModel/IProjectContext.cs b/src/Shared/Microsoft.DotNet.Scaffolding.Shared/ProjectModel/IProjectContext.cs
+index 6b8ceb5..8f29172 100644
+--- a/src/Shared/Microsoft.DotNet.Scaffolding.Shared/ProjectModel/IProjectContext.cs
++++ b/src/Shared/Microsoft.DotNet.Scaffolding.Shared/ProjectModel/IProjectContext.cs
+@@ -121,7 +121,9 @@ public interface IProjectContext
+         IEnumerable<ResolvedReference> CompilationAssemblies { get; }
+ 
+         /// <summary>
+-        /// Paths to project references (direct and indirect) of the project.
++        /// Paths to the project's direct project references that contribute to its compilation.
++        /// References with ReferenceOutputAssembly="false" and transitive references added by the SDK are excluded.
++        /// The full reference graph is available through <see cref="ProjectReferenceInformation"/>.
+         /// </summary>
+         IEnumerable<string> ProjectReferences { get; }
+ 
+diff --git a/test/Scaffolding/Shared/MsBuildProjectSetupHelper.cs b/test/Scaffolding/Shared/MsBuildProjectSetupHelper.cs
+index ec012e0..857e628 100644
+--- a/test/Scaffolding/Shared/MsBuildProjectSetupHelper.cs
++++ b/test/Scaffolding/Shared/MsBuildProjectSetupHelper.cs
+@@ -97,6 +97,12 @@ internal void SetupReferencedCodeGenerationProject(TemporaryFileProvider filePro
+                 $"{MsBuildProjectStrings.LibraryProjectFolder}/_Imports.razor",
+                 "@namespace Custom.Library.Root");
+             fileProvider.Add($"{MsBuildProjectStrings.LibraryProjectFolder}/Layout/MainLayout.razor", "<main />");
++            // Transitive (Theme) and build-only (BuildOnly) Razor projects also expose a conventional MainLayout.
++            // If either leaked into layout resolution, the resolver would report an ambiguity instead of the Library layout.
++            Directory.CreateDirectory(Path.Combine(themePath, "Layout"));
++            Directory.CreateDirectory(Path.Combine(buildOnlyPath, "Layout"));
++            fileProvider.Add($"{MsBuildProjectStrings.ThemeProjectFolder}/Layout/MainLayout.razor", "<main />");
++            fileProvider.Add($"{MsBuildProjectStrings.BuildOnlyProjectFolder}/Layout/MainLayout.razor", "<main />");
+ 
+             RestoreAndBuild(fileProvider.Root, outputHelper, $"{MsBuildProjectStrings.RootProjectFolder}/{MsBuildProjectStrings.RootProjectName}");
+         }

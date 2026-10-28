@@ -1,0 +1,77 @@
+diff --git a/src/Scaffolding/VS.Web.CG.Mvc/BlazorIdentity/BlazorIdentityGenerator.cs b/src/Scaffolding/VS.Web.CG.Mvc/BlazorIdentity/BlazorIdentityGenerator.cs
+index 06f1625..0ad3b92 100644
+--- a/src/Scaffolding/VS.Web.CG.Mvc/BlazorIdentity/BlazorIdentityGenerator.cs
++++ b/src/Scaffolding/VS.Web.CG.Mvc/BlazorIdentity/BlazorIdentityGenerator.cs
+@@ -908,6 +908,11 @@ private static int FindRazorMarkupEnd(string contents, int markupStart)
+ 
+                 var isDeclaration = contents[tagStart + 1] == '!' || contents[tagStart + 1] == '?';
+                 var isSelfClosing = tagEnd > tagStart && contents[tagEnd - 1] == '/';
++                if (!isClosingTag && !isDeclaration && IsVoidHtmlElement(contents, tagStart + 1, tagEnd))
++                {
++                    isSelfClosing = true;
++                }
++
+                 if (!isDeclaration)
+                 {
+                     if (isClosingTag)
+@@ -934,6 +939,22 @@ private static int FindRazorMarkupEnd(string contents, int markupStart)
+             return markupStart;
+         }
+ 
++        private static readonly HashSet<string> VoidHtmlElements = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
++        {
++            "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"
++        };
++
++        private static bool IsVoidHtmlElement(string contents, int nameStart, int tagEnd)
++        {
++            var nameEnd = nameStart;
++            while (nameEnd < tagEnd && (char.IsLetterOrDigit(contents[nameEnd]) || contents[nameEnd] == '-'))
++            {
++                nameEnd++;
++            }
++
++            return VoidHtmlElements.Contains(contents.Substring(nameStart, nameEnd - nameStart));
++        }
++
+         private static int FindMarkupTagEnd(string contents, int index)
+         {
+             var quote = '\0';
+diff --git a/test/Scaffolding/VS.Web.CG.Mvc.Test/BlazorIdentityGeneratorTests.cs b/test/Scaffolding/VS.Web.CG.Mvc.Test/BlazorIdentityGeneratorTests.cs
+index 05073ea..4025866 100644
+--- a/test/Scaffolding/VS.Web.CG.Mvc.Test/BlazorIdentityGeneratorTests.cs
++++ b/test/Scaffolding/VS.Web.CG.Mvc.Test/BlazorIdentityGeneratorTests.cs
+@@ -597,6 +597,33 @@ public void ResolveLayoutNamespaceIgnoresLayoutExcludedFromRazorComponents()
+             Assert.Equal("MyApp.Web.Client.Layout.MainLayout", result);
+         }
+ 
++        [Theory]
++        [InlineData("@if (true) { <p>{<br></p> }")]
++        [InlineData("@if (true) { <p>{<BR><img src=\"a.png\"><input></p> }")]
++        [InlineData("@foreach (var item in items) { <li>{<br>}</li> }")]
++        public void ResolveLayoutNamespaceHandlesVoidHtmlElementsWithoutSelfClosing(string razorCode)
++        {
++            var fileSystem = new Mock<IFileSystem>();
++            var sharedProjectDirectory = Path.Combine("src", "MyApp.Shared");
++            var mainLayoutPath = SetupLayout(fileSystem, sharedProjectDirectory);
++            fileSystem
++                .Setup(fs => fs.ReadAllText(mainLayoutPath))
++                .Returns(razorCode + Environment.NewLine +
++                    "@namespace Active.MixedContent" + Environment.NewLine +
++                    "<main />");
++            var projectReference = CreateProjectReference(sharedProjectDirectory, "MyApp.Shared");
++
++            var result = BlazorIdentityGenerator.ResolveLayoutNamespace(
++                "MyApp.Web",
++                "MyApp.Web",
++                Path.Combine("src", "MyApp.Web"),
++                fileSystem.Object,
++                new[] { projectReference },
++                new[] { projectReference.FullPath });
++
++            Assert.Equal("Active.MixedContent.MainLayout", result);
++        }
++
+         [Fact]
+         public void ResolveLayoutNamespaceRejectsPhysicalLayoutsWithSameNamespace()
+         {

@@ -1,0 +1,58 @@
+diff --git a/src/Scaffolding/VS.Web.CG.Mvc/BlazorIdentity/BlazorIdentityGenerator.cs b/src/Scaffolding/VS.Web.CG.Mvc/BlazorIdentity/BlazorIdentityGenerator.cs
+index 06f1625..7ee2752 100644
+--- a/src/Scaffolding/VS.Web.CG.Mvc/BlazorIdentity/BlazorIdentityGenerator.cs
++++ b/src/Scaffolding/VS.Web.CG.Mvc/BlazorIdentity/BlazorIdentityGenerator.cs
+@@ -858,10 +858,13 @@ private static int FindCSharpLiteralEnd(string contents, int index)
+                 return index;
+             }
+ 
++            // The literal may be the first operand of a larger expression, e.g. "@*" + "docs".
+             var expression = SyntaxFactory.ParseExpression(contents.Substring(index));
+-            return expression.SpanStart == 0 &&
+-                (expression is LiteralExpressionSyntax || expression is InterpolatedStringExpressionSyntax)
+-                ? index + expression.Span.End
++            var leadingLiteral = expression.DescendantNodesAndSelf().FirstOrDefault(node =>
++                node.SpanStart == 0 &&
++                (node is LiteralExpressionSyntax || node is InterpolatedStringExpressionSyntax));
++            return leadingLiteral != null
++                ? index + leadingLiteral.Span.End
+                 : index;
+         }
+ 
+diff --git a/test/Scaffolding/VS.Web.CG.Mvc.Test/BlazorIdentityGeneratorTests.cs b/test/Scaffolding/VS.Web.CG.Mvc.Test/BlazorIdentityGeneratorTests.cs
+index 05073ea..44f010a 100644
+--- a/test/Scaffolding/VS.Web.CG.Mvc.Test/BlazorIdentityGeneratorTests.cs
++++ b/test/Scaffolding/VS.Web.CG.Mvc.Test/BlazorIdentityGeneratorTests.cs
+@@ -530,6 +530,32 @@ public void ResolveLayoutNamespacePreservesDirectiveAfterMixedRazorAndCSharp(str
+             Assert.Equal("Active.MixedContent.MainLayout", result);
+         }
+ 
++        [Theory]
++        [InlineData("@code { private const string Marker = \"@*\" + \"docs\"; }")]
++        [InlineData("@code { private const string Marker = \"@*\".Trim() + \"docs\"; }")]
++        public void ResolveLayoutNamespaceIgnoresCommentMarkerInConcatenatedStringLiteral(string razorCode)
++        {
++            var fileSystem = new Mock<IFileSystem>();
++            var sharedProjectDirectory = Path.Combine("src", "MyApp.Shared");
++            var mainLayoutPath = SetupLayout(fileSystem, sharedProjectDirectory);
++            fileSystem
++                .Setup(fs => fs.ReadAllText(mainLayoutPath))
++                .Returns(razorCode + Environment.NewLine +
++                    "@namespace Active.MixedContent" + Environment.NewLine +
++                    "<main />");
++            var projectReference = CreateProjectReference(sharedProjectDirectory, "MyApp.Shared");
++
++            var result = BlazorIdentityGenerator.ResolveLayoutNamespace(
++                "MyApp.Web",
++                "MyApp.Web",
++                Path.Combine("src", "MyApp.Web"),
++                fileSystem.Object,
++                new[] { projectReference },
++                new[] { projectReference.FullPath });
++
++            Assert.Equal("Active.MixedContent.MainLayout", result);
++        }
++
+         [Fact]
+         public void ResolveLayoutNamespaceIgnoresCommentedImportsNamespaceDirective()
+         {
