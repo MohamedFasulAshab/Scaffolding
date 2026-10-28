@@ -723,12 +723,14 @@ namespace Microsoft.VisualStudio.Web.CodeGenerators.Mvc.Blazor
         private static int FindMatchingRazorCodeBlockEnd(string contents, int openBraceIndex)
         {
             var depth = 0;
+            var previousSignificant = '\0';
             for (var index = openBraceIndex; index < contents.Length; index++)
             {
                 var literalEnd = FindCSharpLiteralEnd(contents, index);
                 if (literalEnd > index)
                 {
                     index = literalEnd - 1;
+                    previousSignificant = '"';
                     continue;
                 }
 
@@ -759,14 +761,20 @@ namespace Microsoft.VisualStudio.Web.CodeGenerators.Mvc.Blazor
                     continue;
                 }
 
-                if (contents[index] == '<' && IsRazorMarkupStart(contents, index))
+                if (contents[index] == '<' && IsRazorMarkupStart(contents, index, previousSignificant))
                 {
                     var markupEnd = FindRazorMarkupEnd(contents, index);
                     if (markupEnd > index)
                     {
                         index = markupEnd - 1;
+                        previousSignificant = '>';
                         continue;
                     }
+                }
+
+                if (!char.IsWhiteSpace(contents[index]))
+                {
+                    previousSignificant = contents[index];
                 }
 
                 if (contents[index] == '{')
@@ -868,9 +876,20 @@ namespace Microsoft.VisualStudio.Web.CodeGenerators.Mvc.Blazor
                 : index;
         }
 
-        private static bool IsRazorMarkupStart(string contents, int index)
+        private static bool IsRazorMarkupStart(string contents, int index, char previousSignificant)
         {
             if (index + 1 >= contents.Length)
+            {
+                return false;
+            }
+
+            // Markup can only begin where a C# statement can begin (or after a case label). After an operand
+            // or identifier, '<' is a comparison or generic argument list (for example a<b or List<int>).
+            if (previousSignificant != '{' &&
+                previousSignificant != '}' &&
+                previousSignificant != ';' &&
+                previousSignificant != '>' &&
+                previousSignificant != ':')
             {
                 return false;
             }

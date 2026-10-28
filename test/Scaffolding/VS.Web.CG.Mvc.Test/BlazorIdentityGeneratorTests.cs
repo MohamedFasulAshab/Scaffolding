@@ -583,6 +583,36 @@ namespace Microsoft.VisualStudio.Web.CodeGenerators.Mvc
             Assert.Equal("MyApp.Shared.Layout.MainLayout", result);
         }
 
+        [Theory]
+        [InlineData("@code { private bool IsLess(int a, int b) => a<b; }")]
+        [InlineData("@code { private bool IsLess(int a, int b) => a < b && b<a; }")]
+        [InlineData("@code { private List<int> Values = new List<int>(); private bool IsLess(int a, int b) => a<b; }")]
+        [InlineData("@if (true) { var values = new List<int>(); <p>{</p> }")]
+        [InlineData("@if (true) { // note\n <p>{</p> }")]
+        [InlineData("@switch (x) { case 1: <p>{</p> break; }")]
+        public void ResolveLayoutNamespaceTreatsComparisonOperatorsAsCSharp(string razorCode)
+        {
+            var fileSystem = new Mock<IFileSystem>();
+            var sharedProjectDirectory = Path.Combine("src", "MyApp.Shared");
+            var mainLayoutPath = SetupLayout(fileSystem, sharedProjectDirectory);
+            fileSystem
+                .Setup(fs => fs.ReadAllText(mainLayoutPath))
+                .Returns(razorCode + Environment.NewLine +
+                    "@namespace Active.MixedContent" + Environment.NewLine +
+                    "<main />");
+            var projectReference = CreateProjectReference(sharedProjectDirectory, "MyApp.Shared");
+
+            var result = BlazorIdentityGenerator.ResolveLayoutNamespace(
+                "MyApp.Web",
+                "MyApp.Web",
+                Path.Combine("src", "MyApp.Web"),
+                fileSystem.Object,
+                new[] { projectReference },
+                new[] { projectReference.FullPath });
+
+            Assert.Equal("Active.MixedContent.MainLayout", result);
+        }
+
         [Fact]
         public void ResolveLayoutNamespaceIgnoresLayoutInNonRazorProject()
         {
