@@ -930,6 +930,11 @@ namespace Microsoft.VisualStudio.Web.CodeGenerators.Mvc.Blazor
 
                 var isDeclaration = contents[tagStart + 1] == '!' || contents[tagStart + 1] == '?';
                 var isSelfClosing = tagEnd > tagStart && contents[tagEnd - 1] == '/';
+                if (!isClosingTag && !isDeclaration && IsVoidHtmlElement(contents, tagStart + 1, tagEnd))
+                {
+                    isSelfClosing = true;
+                }
+
                 if (!isDeclaration)
                 {
                     if (isClosingTag)
@@ -954,6 +959,22 @@ namespace Microsoft.VisualStudio.Web.CodeGenerators.Mvc.Blazor
             }
 
             return markupStart;
+        }
+
+        private static readonly HashSet<string> VoidHtmlElements = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"
+        };
+
+        private static bool IsVoidHtmlElement(string contents, int nameStart, int tagEnd)
+        {
+            var nameEnd = nameStart;
+            while (nameEnd < tagEnd && (char.IsLetterOrDigit(contents[nameEnd]) || contents[nameEnd] == '-'))
+            {
+                nameEnd++;
+            }
+
+            return VoidHtmlElements.Contains(contents.Substring(nameStart, nameEnd - nameStart));
         }
 
         private static int FindMarkupTagEnd(string contents, int index)
