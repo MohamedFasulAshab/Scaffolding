@@ -858,10 +858,13 @@ namespace Microsoft.VisualStudio.Web.CodeGenerators.Mvc.Blazor
                 return index;
             }
 
+            // The literal may be the first operand of a larger expression, e.g. "@*" + "docs".
             var expression = SyntaxFactory.ParseExpression(contents.Substring(index));
-            return expression.SpanStart == 0 &&
-                (expression is LiteralExpressionSyntax || expression is InterpolatedStringExpressionSyntax)
-                ? index + expression.Span.End
+            var leadingLiteral = expression.DescendantNodesAndSelf().FirstOrDefault(node =>
+                node.SpanStart == 0 &&
+                (node is LiteralExpressionSyntax || node is InterpolatedStringExpressionSyntax));
+            return leadingLiteral != null
+                ? index + leadingLiteral.Span.End
                 : index;
         }
 

@@ -530,6 +530,32 @@ namespace Microsoft.VisualStudio.Web.CodeGenerators.Mvc
             Assert.Equal("Active.MixedContent.MainLayout", result);
         }
 
+        [Theory]
+        [InlineData("@code { private const string Marker = \"@*\" + \"docs\"; }")]
+        [InlineData("@code { private const string Marker = \"@*\".Trim() + \"docs\"; }")]
+        public void ResolveLayoutNamespaceIgnoresCommentMarkerInConcatenatedStringLiteral(string razorCode)
+        {
+            var fileSystem = new Mock<IFileSystem>();
+            var sharedProjectDirectory = Path.Combine("src", "MyApp.Shared");
+            var mainLayoutPath = SetupLayout(fileSystem, sharedProjectDirectory);
+            fileSystem
+                .Setup(fs => fs.ReadAllText(mainLayoutPath))
+                .Returns(razorCode + Environment.NewLine +
+                    "@namespace Active.MixedContent" + Environment.NewLine +
+                    "<main />");
+            var projectReference = CreateProjectReference(sharedProjectDirectory, "MyApp.Shared");
+
+            var result = BlazorIdentityGenerator.ResolveLayoutNamespace(
+                "MyApp.Web",
+                "MyApp.Web",
+                Path.Combine("src", "MyApp.Web"),
+                fileSystem.Object,
+                new[] { projectReference },
+                new[] { projectReference.FullPath });
+
+            Assert.Equal("Active.MixedContent.MainLayout", result);
+        }
+
         [Fact]
         public void ResolveLayoutNamespaceIgnoresCommentedImportsNamespaceDirective()
         {
