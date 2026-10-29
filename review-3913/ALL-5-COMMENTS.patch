@@ -1,0 +1,257 @@
+diff --git a/src/Scaffolding/VS.Web.CG.Mvc/BlazorIdentity/BlazorIdentityGenerator.cs b/src/Scaffolding/VS.Web.CG.Mvc/BlazorIdentity/BlazorIdentityGenerator.cs
+index 06f1625..bfd8592 100644
+--- a/src/Scaffolding/VS.Web.CG.Mvc/BlazorIdentity/BlazorIdentityGenerator.cs
++++ b/src/Scaffolding/VS.Web.CG.Mvc/BlazorIdentity/BlazorIdentityGenerator.cs
+@@ -723,12 +723,14 @@ private static int FindMatchingCSharpDelimiter(
+         private static int FindMatchingRazorCodeBlockEnd(string contents, int openBraceIndex)
+         {
+             var depth = 0;
++            var previousSignificant = '\0';
+             for (var index = openBraceIndex; index < contents.Length; index++)
+             {
+                 var literalEnd = FindCSharpLiteralEnd(contents, index);
+                 if (literalEnd > index)
+                 {
+                     index = literalEnd - 1;
++                    previousSignificant = '"';
+                     continue;
+                 }
+ 
+@@ -759,16 +761,22 @@ private static int FindMatchingRazorCodeBlockEnd(string contents, int openBraceI
+                     continue;
+                 }
+ 
+-                if (contents[index] == '<' && IsRazorMarkupStart(contents, index))
++                if (contents[index] == '<' && IsRazorMarkupStart(contents, index, previousSignificant))
+                 {
+                     var markupEnd = FindRazorMarkupEnd(contents, index);
+                     if (markupEnd > index)
+                     {
+                         index = markupEnd - 1;
++                        previousSignificant = '>';
+                         continue;
+                     }
+                 }
+ 
++                if (!char.IsWhiteSpace(contents[index]))
++                {
++                    previousSignificant = contents[index];
++                }
++
+                 if (contents[index] == '{')
+                 {
+                     depth++;
+@@ -858,20 +866,34 @@ private static int FindCSharpLiteralEnd(string contents, int index)
+                 return index;
+             }
+ 
++            // The literal may be the first operand of a larger expression, e.g. "@*" + "docs".
+             var expression = SyntaxFactory.ParseExpression(contents.Substring(index));
+-            return expression.SpanStart == 0 &&
+-                (expression is LiteralExpressionSyntax || expression is InterpolatedStringExpressionSyntax)
+-                ? index + expression.Span.End
++            var leadingLiteral = expression.DescendantNodesAndSelf().FirstOrDefault(node =>
++                node.SpanStart == 0 &&
++                (node is LiteralExpressionSyntax || node is InterpolatedStringExpressionSyntax));
++            return leadingLiteral != null
++                ? index + leadingLiteral.Span.End
+                 : index;
+         }
+ 
+-        private static bool IsRazorMarkupStart(string contents, int index)
++        private static bool IsRazorMarkupStart(string contents, int index, char previousSignificant)
+         {
+             if (index + 1 >= contents.Length)
+             {
+                 return false;
+             }
+ 
++            // Markup can only begin where a C# statement can begin (or after a case label). After an operand
++            // or identifier, '<' is a comparison or generic argument list (for example a<b or List<int>).
++            if (previousSignificant != '{' &&
++                previousSignificant != '}' &&
++                previousSignificant != ';' &&
++                previousSignificant != '>' &&
++                previousSignificant != ':')
++            {
++                return false;
++            }
++
+             var next = contents[index + 1];
+             return char.IsLetter(next) || next == '!' || next == '?';
+         }
+@@ -908,6 +930,11 @@ private static int FindRazorMarkupEnd(string contents, int markupStart)
+ 
+                 var isDeclaration = contents[tagStart + 1] == '!' || contents[tagStart + 1] == '?';
+                 var isSelfClosing = tagEnd > tagStart && contents[tagEnd - 1] == '/';
++                if (!isClosingTag && !isDeclaration && IsVoidHtmlElement(contents, tagStart + 1, tagEnd))
++                {
++                    isSelfClosing = true;
++                }
++
+                 if (!isDeclaration)
+                 {
+                     if (isClosingTag)
+@@ -934,6 +961,22 @@ private static int FindRazorMarkupEnd(string contents, int markupStart)
+             return markupStart;
+         }
+ 
++        private static readonly HashSet<string> VoidHtmlElements = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
++        {
++            "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"
++        };
++
++        private static bool IsVoidHtmlElement(string contents, int nameStart, int tagEnd)
++        {
++            var nameEnd = nameStart;
++            while (nameEnd < tagEnd && (char.IsLetterOrDigit(contents[nameEnd]) || contents[nameEnd] == '-'))
++            {
++                nameEnd++;
++            }
++
++            return VoidHtmlElements.Contains(contents.Substring(nameStart, nameEnd - nameStart));
++        }
++
+         private static int FindMarkupTagEnd(string contents, int index)
+         {
+             var quote = '\0';
+diff --git a/src/Shared/Microsoft.DotNet.Scaffolding.Shared/ProjectModel/IProjectContext.cs b/src/Shared/Microsoft.DotNet.Scaffolding.Shared/ProjectModel/IProjectContext.cs
+index 6b8ceb5..8f29172 100644
+--- a/src/Shared/Microsoft.DotNet.Scaffolding.Shared/ProjectModel/IProjectContext.cs
++++ b/src/Shared/Microsoft.DotNet.Scaffolding.Shared/ProjectModel/IProjectContext.cs
+@@ -121,7 +121,9 @@ public interface IProjectContext
+         IEnumerable<ResolvedReference> CompilationAssemblies { get; }
+ 
+         /// <summary>
+-        /// Paths to project references (direct and indirect) of the project.
++        /// Paths to the project's direct project references that contribute to its compilation.
++        /// References with ReferenceOutputAssembly="false" and transitive references added by the SDK are excluded.
++        /// The full reference graph is available through <see cref="ProjectReferenceInformation"/>.
+         /// </summary>
+         IEnumerable<string> ProjectReferences { get; }
+ 
+diff --git a/test/Scaffolding/Shared/MsBuildProjectSetupHelper.cs b/test/Scaffolding/Shared/MsBuildProjectSetupHelper.cs
+index ec012e0..857e628 100644
+--- a/test/Scaffolding/Shared/MsBuildProjectSetupHelper.cs
++++ b/test/Scaffolding/Shared/MsBuildProjectSetupHelper.cs
+@@ -97,6 +97,12 @@ internal void SetupReferencedCodeGenerationProject(TemporaryFileProvider filePro
+                 $"{MsBuildProjectStrings.LibraryProjectFolder}/_Imports.razor",
+                 "@namespace Custom.Library.Root");
+             fileProvider.Add($"{MsBuildProjectStrings.LibraryProjectFolder}/Layout/MainLayout.razor", "<main />");
++            // Transitive (Theme) and build-only (BuildOnly) Razor projects also expose a conventional MainLayout.
++            // If either leaked into layout resolution, the resolver would report an ambiguity instead of the Library layout.
++            Directory.CreateDirectory(Path.Combine(themePath, "Layout"));
++            Directory.CreateDirectory(Path.Combine(buildOnlyPath, "Layout"));
++            fileProvider.Add($"{MsBuildProjectStrings.ThemeProjectFolder}/Layout/MainLayout.razor", "<main />");
++            fileProvider.Add($"{MsBuildProjectStrings.BuildOnlyProjectFolder}/Layout/MainLayout.razor", "<main />");
+ 
+             RestoreAndBuild(fileProvider.Root, outputHelper, $"{MsBuildProjectStrings.RootProjectFolder}/{MsBuildProjectStrings.RootProjectName}");
+         }
+diff --git a/test/Scaffolding/VS.Web.CG.Mvc.Test/BlazorIdentityGeneratorTests.cs b/test/Scaffolding/VS.Web.CG.Mvc.Test/BlazorIdentityGeneratorTests.cs
+index 05073ea..1c88f82 100644
+--- a/test/Scaffolding/VS.Web.CG.Mvc.Test/BlazorIdentityGeneratorTests.cs
++++ b/test/Scaffolding/VS.Web.CG.Mvc.Test/BlazorIdentityGeneratorTests.cs
+@@ -530,6 +530,32 @@ public void ResolveLayoutNamespacePreservesDirectiveAfterMixedRazorAndCSharp(str
+             Assert.Equal("Active.MixedContent.MainLayout", result);
+         }
+ 
++        [Theory]
++        [InlineData("@code { private const string Marker = \"@*\" + \"docs\"; }")]
++        [InlineData("@code { private const string Marker = \"@*\".Trim() + \"docs\"; }")]
++        public void ResolveLayoutNamespaceIgnoresCommentMarkerInConcatenatedStringLiteral(string razorCode)
++        {
++            var fileSystem = new Mock<IFileSystem>();
++            var sharedProjectDirectory = Path.Combine("src", "MyApp.Shared");
++            var mainLayoutPath = SetupLayout(fileSystem, sharedProjectDirectory);
++            fileSystem
++                .Setup(fs => fs.ReadAllText(mainLayoutPath))
++                .Returns(razorCode + Environment.NewLine +
++                    "@namespace Active.MixedContent" + Environment.NewLine +
++                    "<main />");
++            var projectReference = CreateProjectReference(sharedProjectDirectory, "MyApp.Shared");
++
++            var result = BlazorIdentityGenerator.ResolveLayoutNamespace(
++                "MyApp.Web",
++                "MyApp.Web",
++                Path.Combine("src", "MyApp.Web"),
++                fileSystem.Object,
++                new[] { projectReference },
++                new[] { projectReference.FullPath });
++
++            Assert.Equal("Active.MixedContent.MainLayout", result);
++        }
++
+         [Fact]
+         public void ResolveLayoutNamespaceIgnoresCommentedImportsNamespaceDirective()
+         {
+@@ -557,6 +583,36 @@ public void ResolveLayoutNamespaceIgnoresCommentedImportsNamespaceDirective()
+             Assert.Equal("MyApp.Shared.Layout.MainLayout", result);
+         }
+ 
++        [Theory]
++        [InlineData("@code { private bool IsLess(int a, int b) => a<b; }")]
++        [InlineData("@code { private bool IsLess(int a, int b) => a < b && b<a; }")]
++        [InlineData("@code { private List<int> Values = new List<int>(); private bool IsLess(int a, int b) => a<b; }")]
++        [InlineData("@if (true) { var values = new List<int>(); <p>{</p> }")]
++        [InlineData("@if (true) { // note\n <p>{</p> }")]
++        [InlineData("@switch (x) { case 1: <p>{</p> break; }")]
++        public void ResolveLayoutNamespaceTreatsComparisonOperatorsAsCSharp(string razorCode)
++        {
++            var fileSystem = new Mock<IFileSystem>();
++            var sharedProjectDirectory = Path.Combine("src", "MyApp.Shared");
++            var mainLayoutPath = SetupLayout(fileSystem, sharedProjectDirectory);
++            fileSystem
++                .Setup(fs => fs.ReadAllText(mainLayoutPath))
++                .Returns(razorCode + Environment.NewLine +
++                    "@namespace Active.MixedContent" + Environment.NewLine +
++                    "<main />");
++            var projectReference = CreateProjectReference(sharedProjectDirectory, "MyApp.Shared");
++
++            var result = BlazorIdentityGenerator.ResolveLayoutNamespace(
++                "MyApp.Web",
++                "MyApp.Web",
++                Path.Combine("src", "MyApp.Web"),
++                fileSystem.Object,
++                new[] { projectReference },
++                new[] { projectReference.FullPath });
++
++            Assert.Equal("Active.MixedContent.MainLayout", result);
++        }
++
+         [Fact]
+         public void ResolveLayoutNamespaceIgnoresLayoutInNonRazorProject()
+         {
+@@ -597,6 +653,33 @@ public void ResolveLayoutNamespaceIgnoresLayoutExcludedFromRazorComponents()
+             Assert.Equal("MyApp.Web.Client.Layout.MainLayout", result);
+         }
+ 
++        [Theory]
++        [InlineData("@if (true) { <p>{<br></p> }")]
++        [InlineData("@if (true) { <p>{<BR><img src=\"a.png\"><input></p> }")]
++        [InlineData("@foreach (var item in items) { <li>{<br>}</li> }")]
++        public void ResolveLayoutNamespaceHandlesVoidHtmlElementsWithoutSelfClosing(string razorCode)
++        {
++            var fileSystem = new Mock<IFileSystem>();
++            var sharedProjectDirectory = Path.Combine("src", "MyApp.Shared");
++            var mainLayoutPath = SetupLayout(fileSystem, sharedProjectDirectory);
++            fileSystem
++                .Setup(fs => fs.ReadAllText(mainLayoutPath))
++                .Returns(razorCode + Environment.NewLine +
++                    "@namespace Active.MixedContent" + Environment.NewLine +
++                    "<main />");
++            var projectReference = CreateProjectReference(sharedProjectDirectory, "MyApp.Shared");
++
++            var result = BlazorIdentityGenerator.ResolveLayoutNamespace(
++                "MyApp.Web",
++                "MyApp.Web",
++                Path.Combine("src", "MyApp.Web"),
++                fileSystem.Object,
++                new[] { projectReference },
++                new[] { projectReference.FullPath });
++
++            Assert.Equal("Active.MixedContent.MainLayout", result);
++        }
++
+         [Fact]
+         public void ResolveLayoutNamespaceRejectsPhysicalLayoutsWithSameNamespace()
+         {
