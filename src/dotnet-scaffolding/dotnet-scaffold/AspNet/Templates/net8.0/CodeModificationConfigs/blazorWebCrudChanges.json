@@ -7,16 +7,8 @@
           "CodeChanges": [
             {
               "InsertAfter": "WebApplication.CreateBuilder",
-              "CheckBlock": "builder.Configuration.GetConnectionString(\"$(ConnectionStringName)\")",
-              "Block": "\nvar $(DbContextName)ConnectionString = builder.Configuration.GetConnectionString(\"$(ConnectionStringName)\") ?? throw new InvalidOperationException(\"Connection string '$(ConnectionStringName)' not found.\")"
-            },
-            {
-              "InsertAfter": "builder.Configuration.GetConnectionString(\"$(ConnectionStringName)\")",
               "CheckBlock": "builder.Services.AddDbContextFactory<$(DbContextName)>",
-              "Block": "builder.Services.AddDbContextFactory<$(DbContextName)>(options => options.$(UseDbMethod)($(DbContextName)ConnectionString))",
-              "LeadingTrivia": {
-                "Newline": true
-              }
+              "Block": "\n{\n    var $(DbContextName)ConnectionString = builder.Configuration.GetConnectionString(\"$(ConnectionStringName)\") ?? throw new InvalidOperationException(\"Connection string '$(ConnectionStringName)' not found.\");\n\n    builder.Services.AddDbContextFactory<$(DbContextName)>(options => options.$(UseDbMethod)($(DbContextName)ConnectionString));\n}"
             },
             {
               "InsertAfter": "WebApplication.CreateBuilder.Services.AddDbContext",
