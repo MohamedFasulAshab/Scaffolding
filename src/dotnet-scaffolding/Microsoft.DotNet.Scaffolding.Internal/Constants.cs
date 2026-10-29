@@ -18,6 +18,7 @@ internal static class Constants
         public const string AutoGenProjectName = "$(AutoGenProjectName)";
         //DbContext related constants
         public const string UseDbMethod = "$(UseDbMethod)";
+        public const string UseDbMethodWithContextConnectionString = "$(UseDbMethodWithContextConnectionString)";
         public const string DbContextName = "$(DbContextName)";
         public const string DbContextNamespace = "$(DbContextNamespace)";
         //Identity related constants

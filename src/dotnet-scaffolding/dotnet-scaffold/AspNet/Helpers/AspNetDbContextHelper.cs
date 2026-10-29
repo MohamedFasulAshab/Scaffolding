@@ -47,6 +47,17 @@ internal class AspNetDbContextHelper
                     $"{useDbMethod}(connectionString, \"{dbContextInfo.DbContextClassName}\")" :
                     $"{useDbMethod}(connectionString)"; 
                 dbContextProperties.Add(Constants.CodeModifierPropertyConstants.UseDbMethod, useDbMethodFull);
+
+                // Variant that references a context-specific connection string variable (e.g. "AppDbContextConnectionString")
+                // so a scaffolded DbContext registration does not collide with an existing "connectionString" variable.
+                if (!string.IsNullOrEmpty(dbContextInfo.DbContextClassName))
+                {
+                    string contextConnectionString = $"{dbContextInfo.DbContextClassName}ConnectionString";
+                    string useDbMethodWithContextConnectionString = dbContextInfo.DatabaseProvider.Equals(PackageConstants.EfConstants.CosmosDb, StringComparison.OrdinalIgnoreCase) ?
+                        $"{useDbMethod}({contextConnectionString}, \"{dbContextInfo.DbContextClassName}\")" :
+                        $"{useDbMethod}({contextConnectionString})";
+                    dbContextProperties.Add(Constants.CodeModifierPropertyConstants.UseDbMethodWithContextConnectionString, useDbMethodWithContextConnectionString);
+                }
             }
 
             if (!string.IsNullOrEmpty(dbContextInfo.DbContextClassName))
