@@ -144,6 +144,11 @@ internal class ValidateViewsStep : ScaffoldStep
         ModelInfo? modelInfo = null;
         var allClasses = await projectInfo.CodeService.GetAllClassSymbolsAsync();
         var modelClassSymbol = allClasses.FirstOrDefault(x => x.Name.Equals(settings.Model, StringComparison.OrdinalIgnoreCase));
+        if (modelClassSymbol is null && !string.IsNullOrEmpty(settings.Model))
+        {
+            modelClassSymbol = await ReferencedProjectModelResolver.FindModelAsync(settings.Project, settings.Model, _logger);
+        }
+
         if (string.IsNullOrEmpty(settings.Model) || modelClassSymbol is null)
         {
             _logger.LogError($"Invalid {AspNetConstants.CliOptions.ModelCliOption} '{settings.Model}'");
