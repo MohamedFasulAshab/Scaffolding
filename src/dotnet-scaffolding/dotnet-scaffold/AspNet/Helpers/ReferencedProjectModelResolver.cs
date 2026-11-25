@@ -31,7 +31,7 @@ internal static class ReferencedProjectModelResolver
         }
         catch (Exception ex)
         {
-            logger.LogDebug("Referenced project lookup for '{ModelName}' failed: {Message}", modelName, ex.Message);
+            logger.LogWarning("Referenced project lookup for '{ModelName}' failed: {Message}", modelName, ex.Message);
             return null;
         }
 
@@ -44,7 +44,13 @@ internal static class ReferencedProjectModelResolver
         using var workspace = MSBuildWorkspace.Create();
         workspace.LoadMetadataForReferencedProjects = false;
         using var workspaceFailedRegistration = workspace.RegisterWorkspaceFailedHandler(
-            e => logger.LogDebug("Referenced project lookup workspace diagnostic: {Message}", e.Diagnostic.Message));
+            e =>
+            {
+                if (e.Diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
+                {
+                    logger.LogWarning("Referenced project lookup workspace diagnostic: {Message}", e.Diagnostic.Message);
+                }
+            });
         var project = await workspace.OpenProjectAsync(fullProjectPath, cancellationToken: cancellationToken);
         return await FindMatchesAsync(project, modelName, cancellationToken);
     }

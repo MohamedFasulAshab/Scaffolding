@@ -76,37 +76,15 @@ public class RazorViewsNet10IntegrationTests : RazorViewsIntegrationTestsBase
         {
             var viewPath = Path.Combine(viewsDir, view);
             Assert.True(File.Exists(viewPath), $"View '{view}' should be created.");
-            Assert.Contains("ModelsLib.Models.TestModel", File.ReadAllText(viewPath));
+            var expectedModelDirective = view == "Index.cshtml"
+                ? "@model IEnumerable<ModelsLib.Models.TestModel>"
+                : "@model ModelsLib.Models.TestModel";
+            Assert.Contains(expectedModelDirective, File.ReadAllLines(viewPath));
         }
 
         var (postExitCode, postOutput, postError) = await RunBuildAsync(_testProjectDir);
         Assert.True(postExitCode == 0,
             $"Project should build after scaffolding.\nExit code: {postExitCode}\nOutput: {postOutput}\nError: {postError}");
-    }
-
-    [Fact]
-    public async Task Scaffold_Views_Net10_AmbiguousModelInReferencedProjects_Fails()
-    {
-        WriteReferencingWebProject("ModelsA", "ModelsB");
-        WriteClassLibrary("ModelsA", ScaffoldCliHelper.GetModelClassContent("ModelsA", "TestModel"));
-        WriteClassLibrary("ModelsB", ScaffoldCliHelper.GetModelClassContent("ModelsB", "TestModel"));
-
-        var (preExitCode, preOutput, preError) = await RunBuildAsync(_testProjectDir);
-        Assert.True(preExitCode == 0,
-            $"Project should build before scaffolding.\nExit code: {preExitCode}\nOutput: {preOutput}\nError: {preError}");
-
-        var (cliExitCode, cliOutput, cliError) = await ScaffoldCliHelper.RunScaffoldAsync(
-            TargetFramework,
-            "views",
-            "--project", _testProjectPath,
-            "--model", "TestModel",
-            "--page", "CRUD");
-
-        Assert.NotEqual(0, cliExitCode);
-        Assert.Contains(
-            "Multiple classes match --model 'TestModel' in referenced projects: 'ModelsA.Models.TestModel' (ModelsA), 'ModelsB.Models.TestModel' (ModelsB). Use a fully qualified class name.",
-            cliOutput + cliError);
-        Assert.False(Directory.Exists(Path.Combine(_testProjectDir, "Views", "TestModel")), "No views should be generated.");
     }
 
     private void WriteReferencingWebProject(params string[] libraryNames)

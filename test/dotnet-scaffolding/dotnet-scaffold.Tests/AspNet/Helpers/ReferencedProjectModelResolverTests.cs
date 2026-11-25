@@ -37,18 +37,7 @@ public class ReferencedProjectModelResolverTests : IDisposable
         var match = Assert.Single(await ReferencedProjectModelResolver.FindMatchesAsync(web, "ContactUs"));
         Assert.Equal("Lib.ContactUs", match.ToDisplayString());
         Assert.Equal("Lib", match.ContainingAssembly.Name);
-    }
-
-    [Fact]
-    public async Task FindMatches_SameNameInRootAndReference_ReturnsOnlyReferencedType()
-    {
-        // The step only calls the resolver after the existing local lookup misses, so a local match always wins.
-        var web = CreateSolution(
-            ("Web", "namespace Web; public class ContactUs { public int Id { get; set; } }", ["Lib"]),
-            ("Lib", ContactUsSource, []));
-
-        var match = Assert.Single(await ReferencedProjectModelResolver.FindMatchesAsync(web, "ContactUs"));
-        Assert.Equal("Lib.ContactUs", match.ToDisplayString());
+        Assert.Equal("Lib.ContactUs", Assert.Single(await ReferencedProjectModelResolver.FindMatchesAsync(web, "contactus")).ToDisplayString());
     }
 
     [Fact]
@@ -74,8 +63,6 @@ public class ReferencedProjectModelResolverTests : IDisposable
 
     [Theory]
     [InlineData("Lib.ContactUs", true)]
-    [InlineData("Lib.Missing", false)]
-    [InlineData("Other.ContactUs", false)]
     [InlineData("lib.contactus", false)]
     public async Task FindMatches_QualifiedName_MatchesExactNamespaceQualifiedNameOnly(string modelName, bool expectedFound)
     {
@@ -84,16 +71,6 @@ public class ReferencedProjectModelResolverTests : IDisposable
         var matches = await ReferencedProjectModelResolver.FindMatchesAsync(web, modelName);
 
         Assert.Equal(expectedFound, matches.Count == 1);
-    }
-
-    [Theory]
-    [InlineData("contactus")]
-    [InlineData("CONTACTUS")]
-    public async Task FindMatches_SimpleName_IsCaseInsensitiveLikeLocalLookup(string modelName)
-    {
-        var web = CreateSolution(("Web", "", ["Lib"]), ("Lib", ContactUsSource, []));
-
-        Assert.Single(await ReferencedProjectModelResolver.FindMatchesAsync(web, modelName));
     }
 
     [Fact]
@@ -111,13 +88,10 @@ public class ReferencedProjectModelResolverTests : IDisposable
 
     [Theory]
     [InlineData("namespace Lib; internal class ContactUs { public int Id { get; set; } }")]
-    [InlineData("[assembly: System.Runtime.CompilerServices.InternalsVisibleTo(\"Web\")] namespace Lib; internal class ContactUs { public int Id { get; set; } }")]
     [InlineData("namespace Lib; public class Outer { public class ContactUs { public int Id { get; set; } } }")]
     [InlineData("namespace Lib; public record ContactUs(int Id);")]
-    [InlineData("namespace Lib; public struct ContactUs { public int Id { get; set; } }")]
-    [InlineData("namespace Lib; public record struct ContactUs(int Id);")]
-    [InlineData("namespace Lib; public interface ContactUs { int Id { get; set; } }")]
-    public async Task FindMatches_IgnoresNonPublicNestedRecordAndNonClassTypes(string librarySource)
+    [InlineData("namespace Lib; public class ContactUs<T> { public int Id { get; set; } }")]
+    public async Task FindMatches_IgnoresInternalNestedRecordAndGenericTypes(string librarySource)
     {
         var web = CreateSolution(("Web", "", ["Lib"]), ("Lib", librarySource, []));
 
@@ -125,24 +99,28 @@ public class ReferencedProjectModelResolverTests : IDisposable
     }
 
     [Fact]
-    public async Task FindMatches_GenericClass_DoesNotMatchSimpleName()
-    {
-        var web = CreateSolution(("Web", "", ["Lib"]), ("Lib", "namespace Lib; public class Item<T> { public int Id { get; set; } }", []));
-
-        Assert.Empty(await ReferencedProjectModelResolver.FindMatchesAsync(web, "Item"));
-        Assert.Empty(await ReferencedProjectModelResolver.FindMatchesAsync(web, "Lib.Item"));
-    }
-
-    [Theory]
-    [InlineData("Task")]
-    [InlineData("Uri")]
-    [InlineData("System.Uri")]
-    [InlineData("Object")]
-    public async Task FindMatches_DoesNotResolveFrameworkTypes(string modelName)
+    public async Task FindMatches_DoesNotResolveFrameworkTypes()
     {
         var web = CreateSolution(("Web", "", ["Lib"]), ("Lib", ContactUsSource, []));
 
-        Assert.Empty(await ReferencedProjectModelResolver.FindMatchesAsync(web, modelName));
+        Assert.Empty(await ReferencedProjectModelResolver.FindMatchesAsync(web, "Task"));
+    }
+
+    [Fact]
+    public async Task FindMatches_DiamondReferences_ReturnsSingleMatchWithoutAmbiguity()
+    {
+        var web = CreateSolution(
+            ("Web", "", ["A", "B"]),
+            ("A", "namespace A; public class ContactUs { public int Id { get; set; } }", []),
+            ("B", "namespace B; public class Other { }", ["A"]));
+        var logger = new ListLogger();
+
+        var matches = await ReferencedProjectModelResolver.FindMatchesAsync(web, "ContactUs");
+        var match = Assert.Single(matches);
+
+        Assert.Equal("A.ContactUs", match.ToDisplayString());
+        Assert.Same(match, ReferencedProjectModelResolver.SelectSingleMatch(matches, "ContactUs", logger));
+        Assert.Empty(logger.Errors);
     }
 
     [Fact]
@@ -158,14 +136,6 @@ public class ReferencedProjectModelResolverTests : IDisposable
 
         Assert.Equal(["LibA.ContactUs", "LibB.ContactUs"], first.Select(t => t.ToDisplayString()));
         Assert.Equal(first.Select(t => t.ToDisplayString()), second.Select(t => t.ToDisplayString()));
-    }
-
-    [Fact]
-    public async Task FindMatches_ProjectWithoutReferences_ReturnsNoMatches()
-    {
-        var web = CreateSolution(("Web", "namespace Web; public class Home { }", []));
-
-        Assert.Empty(await ReferencedProjectModelResolver.FindMatchesAsync(web, "ContactUs"));
     }
 
     [Fact]

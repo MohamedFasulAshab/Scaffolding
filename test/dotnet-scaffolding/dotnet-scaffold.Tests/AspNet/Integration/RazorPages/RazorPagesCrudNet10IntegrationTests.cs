@@ -93,4 +93,48 @@ public class RazorPagesCrudNet10IntegrationTests : RazorPagesCrudIntegrationTest
                 $"Project should build after scaffolding.\nExit code: {postExitCode}\nOutput: {postOutput}\nError: {postError}");
         }
     }
+
+    [Fact]
+    public async Task Scaffold_RazorPagesCrud_Net10_ModelInReferencedProject()
+    {
+        File.WriteAllText(_testProjectPath, ProjectContent.Replace(
+            "</Project>",
+            "  <ItemGroup>\n    <ProjectReference Include=\"..\\ModelsLib\\ModelsLib.csproj\" />\n  </ItemGroup>\n</Project>"));
+        File.WriteAllText(Path.Combine(_testProjectDir, "Program.cs"), ScaffoldCliHelper.GetMinimalProgramCs());
+        var libraryDir = Path.Combine(_testDirectory, "ModelsLib");
+        Directory.CreateDirectory(libraryDir);
+        File.WriteAllText(Path.Combine(libraryDir, "ModelsLib.csproj"), $@"<Project Sdk=""Microsoft.NET.Sdk"">
+  <PropertyGroup>
+    <TargetFramework>{TargetFramework}</TargetFramework>
+  </PropertyGroup>
+</Project>");
+        File.WriteAllText(Path.Combine(libraryDir, "TestModel.cs"), ScaffoldCliHelper.GetModelClassContent("ModelsLib", "TestModel"));
+
+        var (preExitCode, preOutput, preError) = await RunBuildAsync(_testProjectDir);
+        Assert.True(preExitCode == 0,
+            $"Project should build before scaffolding.\nExit code: {preExitCode}\nOutput: {preOutput}\nError: {preError}");
+
+        var (cliExitCode, cliOutput, cliError) = await ScaffoldCliHelper.RunScaffoldAsync(
+            TargetFramework,
+            "razorpages-crud",
+            "--project", _testProjectPath,
+            "--model", "TestModel",
+            "--dataContext", "TestDbContext",
+            "--dbProvider", "sqlite-efcore",
+            "--page", "CRUD");
+        Assert.True(cliExitCode == 0, $"CLI scaffold should succeed.\nOutput: {cliOutput}\nError: {cliError}");
+
+        var razorPagesDir = Path.Combine(_testProjectDir, "Pages", "TestModelPages");
+        foreach (var page in new[] { "Create", "Delete", "Details", "Edit", "Index" })
+        {
+            Assert.True(File.Exists(Path.Combine(razorPagesDir, $"{page}.cshtml")), $"{page}.cshtml should be created.");
+            var pageModelPath = Path.Combine(razorPagesDir, $"{page}.cshtml.cs");
+            Assert.True(File.Exists(pageModelPath), $"{page}.cshtml.cs should be created.");
+            Assert.Contains("using ModelsLib.Models;", File.ReadAllText(pageModelPath));
+        }
+
+        var (postExitCode, postOutput, postError) = await RunBuildAsync(_testProjectDir);
+        Assert.True(postExitCode == 0,
+            $"Project should build after scaffolding.\nExit code: {postExitCode}\nOutput: {postOutput}\nError: {postError}");
+    }
 }
