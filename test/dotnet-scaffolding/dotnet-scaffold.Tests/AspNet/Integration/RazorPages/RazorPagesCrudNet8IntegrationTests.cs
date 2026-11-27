@@ -41,6 +41,10 @@ public class RazorPagesCrudNet8IntegrationTests : RazorPagesCrudIntegrationTests
         AssertRazorPagesTemplateFileExists(subfolder, fileName);
     }
     [Fact]
+    public Task Scaffold_RazorPagesCrud_Net8_ReferencedContextExistingDbSet()
+        => AssertReferencedContextScenarioAsync();
+
+    [Fact]
     public async Task Scaffold_RazorPagesCrud_Net8_CliInvocation()
     {
         // Arrange — write project + Program.cs + model class

@@ -89,7 +89,7 @@ internal class ValidateRazorPagesStep : ScaffoldStep
 
         //initialize RazorPageModel
         _logger.LogInformation("Initializing scaffolding model...");
-        var razorPageModel = await GetRazorPageModelAsync(context, razorPagesSettings);
+        var razorPageModel = await GetRazorPageModelAsync(context, razorPagesSettings, cancellationToken);
         if (razorPageModel is null)
         {
             _logger.LogError("An error occurred.");
@@ -102,7 +102,7 @@ internal class ValidateRazorPagesStep : ScaffoldStep
         }
 
         //Install packages and add a DbContext (if needed)
-        if (razorPageModel.DbContextInfo.EfScenario)
+        if (razorPageModel.DbContextInfo.EfScenario && !razorPageModel.UsesReferencedDbContext)
         {
             var dbContextProperties = AspNetDbContextHelper.GetDbContextProperties(razorPagesSettings.Project, razorPageModel.DbContextInfo);
             if (dbContextProperties is not null)
@@ -189,8 +189,9 @@ internal class ValidateRazorPagesStep : ScaffoldStep
     /// </summary>
     /// <param name="context">The scaffolder context.</param>
     /// <param name="settings">The validated CRUD settings.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task that represents the asynchronous operation, with the RazorPageModel as the result.</returns>
-    private async Task<RazorPageModel?> GetRazorPageModelAsync(ScaffolderContext context, CrudSettings settings)
+    private async Task<RazorPageModel?> GetRazorPageModelAsync(ScaffolderContext context, CrudSettings settings, CancellationToken cancellationToken)
     {
         ProjectInfo projectInfo = ClassAnalyzers.GetProjectInfo(settings.Project, _logger);
         context.SetSpecifiedTargetFramework(projectInfo.LowestSupportedTargetFramework);
@@ -204,10 +205,23 @@ internal class ValidateRazorPagesStep : ScaffoldStep
         ModelInfo? modelInfo = null;
         var allClasses = await projectInfo.CodeService.GetAllClassSymbolsAsync();
         var modelClassSymbol = allClasses.FirstOrDefault(x => x.Name.Equals(settings.Model, StringComparison.OrdinalIgnoreCase));
-        if (modelClassSymbol is null && !string.IsNullOrEmpty(settings.Model))
+        var localContext = allClasses.FirstOrDefault(x => x.Name.Equals(settings.DataContext, StringComparison.OrdinalIgnoreCase));
+        var referenced = await ReferencedProjectModelResolver.ResolveAsync(settings.Project,
+            modelClassSymbol is null ? settings.Model : null,
+            localContext is null ? settings.DataContext : null, _logger, cancellationToken);
+        if (referenced.Model.Status is ReferencedProjectLookupStatus.Ambiguous or ReferencedProjectLookupStatus.LookupFailed ||
+            referenced.Context.Status is ReferencedProjectLookupStatus.Ambiguous or ReferencedProjectLookupStatus.LookupFailed)
         {
-            modelClassSymbol = await ReferencedProjectModelResolver.FindModelAsync(settings.Project, settings.Model, _logger);
+            if (modelClassSymbol is null)
+            {
+                _logger.LogError($"Invalid {AspNetConstants.CliOptions.ModelCliOption} '{settings.Model}'");
+            }
+
+            _logger.LogError("Unable to resolve model or DbContext from referenced projects.");
+            return null;
         }
+
+        modelClassSymbol ??= referenced.Model.Symbol;
 
         if (string.IsNullOrEmpty(settings.Model) || modelClassSymbol is null)
         {
@@ -232,9 +246,31 @@ internal class ValidateRazorPagesStep : ScaffoldStep
 
         if (!string.IsNullOrEmpty(dbContextClassName) && !string.IsNullOrEmpty(settings.DatabaseProvider))
         {
-            var dbContextClassSymbol = allClasses.FirstOrDefault(x => x.Name.Equals(dbContextClassName, StringComparison.OrdinalIgnoreCase));
-            dbContextInfo = ClassAnalyzers.GetDbContextInfo(settings.Project, dbContextClassSymbol, dbContextClassName, settings.DatabaseProvider, modelInfo);
-            dbContextInfo.EfScenario = true;
+            if (referenced.Context.Status == ReferencedProjectLookupStatus.Found)
+            {
+                var symbol = referenced.Context.Symbol!;
+                var setName = ReferencedProjectModelResolver.FindDbSetName(symbol, modelInfo.ModelFullName);
+                if (setName is null)
+                {
+                    _logger.LogError($"Referenced DbContext '{symbol.ToDisplayString()}' from project '{symbol.ContainingAssembly.Name}' has no DbSet for '{modelInfo.ModelFullName}'. Add a DbSet<{modelInfo.ModelFullName}> to that DbContext before scaffolding.");
+                    return null;
+                }
+
+                dbContextInfo = new DbContextInfo
+                {
+                    DbContextClassName = symbol.Name,
+                    DbContextNamespace = symbol.ContainingNamespace.IsGlobalNamespace ? string.Empty : symbol.ContainingNamespace.ToDisplayString(),
+                    DatabaseProvider = settings.DatabaseProvider,
+                    EntitySetVariableName = setName,
+                    EfScenario = true
+                };
+                _logger.LogInformation($"Using existing DbContext '{symbol.ToDisplayString()}' from project '{symbol.ContainingAssembly.Name}'. Make sure it is registered in the web app's services.");
+            }
+            else
+            {
+                dbContextInfo = ClassAnalyzers.GetDbContextInfo(settings.Project, localContext, dbContextClassName, settings.DatabaseProvider, modelInfo);
+                dbContextInfo.EfScenario = true;
+            }
         }
 
         string razorPageNamespace = string.Empty;
@@ -249,6 +285,7 @@ internal class ValidateRazorPagesStep : ScaffoldStep
             ProjectInfo = projectInfo,
             ModelInfo = modelInfo,
             DbContextInfo = dbContextInfo,
+            UsesReferencedDbContext = referenced.Context.Status == ReferencedProjectLookupStatus.Found,
             PageType = settings.Page,
             RazorPageNamespace = razorPageNamespace
         };
@@ -257,7 +294,7 @@ internal class ValidateRazorPagesStep : ScaffoldStep
         {
             scaffoldingModel.ProjectInfo.CodeChangeOptions =
             [
-                scaffoldingModel.DbContextInfo.EfScenario ? "EfScenario" : string.Empty
+                scaffoldingModel.DbContextInfo.EfScenario && !scaffoldingModel.UsesReferencedDbContext ? "EfScenario" : string.Empty
             ];
         }
 

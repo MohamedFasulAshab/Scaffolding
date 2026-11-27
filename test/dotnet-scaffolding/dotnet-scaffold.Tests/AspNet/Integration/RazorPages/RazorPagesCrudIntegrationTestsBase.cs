@@ -474,6 +474,124 @@ public abstract class RazorPagesCrudIntegrationTestsBase : IDisposable
         return Path.GetFullPath(basePath);
     }
 
+    protected async Task AssertReferencedContextScenarioAsync(string scenario = "Success")
+    {
+        var entitiesDir = Path.Combine(_testDirectory, "Entities");
+        var dataDir = Path.Combine(_testDirectory, "DataAccess");
+        Directory.CreateDirectory(entitiesDir);
+        Directory.CreateDirectory(dataDir);
+        File.WriteAllText(Path.Combine(_testDirectory, "NuGet.config"), ScaffoldCliHelper.GetTestNuGetConfig(TargetFramework));
+        File.WriteAllText(Path.Combine(_testDirectory, "ReferencedContext.slnx"),
+            "<Solution><Project Path=\"Entities/Entities.csproj\" /><Project Path=\"DataAccess/DataAccess.csproj\" /><Project Path=\"TestProject/TestProject.csproj\" /></Solution>");
+        var libraryProject = $"<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>{TargetFramework}</TargetFramework></PropertyGroup>{{0}}</Project>";
+        File.WriteAllText(Path.Combine(entitiesDir, "Entities.csproj"), string.Format(libraryProject, ""));
+        File.WriteAllText(Path.Combine(entitiesDir, "Product.cs"), "namespace Entities; public class Product { public int Id { get; set; } public string Name { get; set; } }");
+        var packageVersion = TargetFramework == "net8.0" ? "8.0.0" : "10.0.0";
+        var package = $"<PackageReference Include=\"Microsoft.EntityFrameworkCore.Sqlite\" Version=\"{packageVersion}\" />";
+        File.WriteAllText(Path.Combine(dataDir, "DataAccess.csproj"), string.Format(libraryProject,
+            $"<ItemGroup><ProjectReference Include=\"../Entities/Entities.csproj\" />{package}</ItemGroup>"));
+        var hasSet = scenario == "Success";
+        File.WriteAllText(Path.Combine(dataDir, "StoreContext.cs"),
+            "using Microsoft.EntityFrameworkCore; namespace DataAccess; public class StoreContext : DbContext { " +
+            "public StoreContext(DbContextOptions<StoreContext> options) : base(options) {} " +
+            (hasSet ? "public DbSet<Entities.Product> Products { get; set; }" : "") + " }");
+        File.WriteAllText(_testProjectPath, ProjectContent.Replace("</Project>",
+            $"<ItemGroup><ProjectReference Include=\"../Entities/Entities.csproj\" /><ProjectReference Include=\"../DataAccess/DataAccess.csproj\" />{package}</ItemGroup></Project>"));
+        if (scenario == "LocalModelMissingSet")
+        {
+            File.WriteAllText(Path.Combine(_testProjectDir, "Product.cs"), "namespace WebModels; public class Product { public int Id { get; set; } }");
+        }
+        if (scenario == "AmbiguousModel")
+        {
+            File.WriteAllText(Path.Combine(dataDir, "Product.cs"), "namespace DataAccess; public class Product { public int Id { get; set; } }");
+        }
+        const string program = "using DataAccess; using Microsoft.EntityFrameworkCore;\nvar builder = WebApplication.CreateBuilder(args);\nbuilder.Services.AddRazorPages();\nbuilder.Services.AddDbContext<StoreContext>(options => options.UseSqlite(builder.Configuration.GetConnectionString(\"Products\")));\nvar app = builder.Build();\napp.MapRazorPages();\napp.Run();\n";
+        const string appSettings = "{\"ConnectionStrings\":{\"Unchanged\":\"original\"}}";
+        var programPath = Path.Combine(_testProjectDir, "Program.cs");
+        var settingsPath = Path.Combine(_testProjectDir, "appsettings.json");
+        File.WriteAllText(programPath, program);
+        File.WriteAllText(settingsPath, appSettings);
+        var before = await RunReferencedSolutionBuildAsync();
+        Assert.True(before.ExitCode == 0, before.Output + before.Error);
+        var librarySources = Directory.GetFiles(entitiesDir, "*.cs", SearchOption.TopDirectoryOnly)
+            .Concat(Directory.GetFiles(dataDir, "*.cs", SearchOption.TopDirectoryOnly))
+            .Concat(Directory.GetFiles(entitiesDir, "*.csproj"))
+            .Concat(Directory.GetFiles(dataDir, "*.csproj"))
+            .ToDictionary(p => p, p => Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(p))));
+        var webSources = Directory.GetFiles(_testProjectDir, "*", SearchOption.AllDirectories)
+            .Where(p => !p.Contains(Path.DirectorySeparatorChar + "obj" + Path.DirectorySeparatorChar) &&
+                !p.Contains(Path.DirectorySeparatorChar + "bin" + Path.DirectorySeparatorChar)).OrderBy(p => p).ToArray();
+
+        var cli = await ScaffoldCliHelper.RunScaffoldAsync(TargetFramework, "razorpages-crud",
+            "--project", _testProjectPath, "--model", "Product", "--dataContext", "StoreContext", "--dbProvider", "sqlite-efcore", "--page", "CRUD");
+        var output = cli.Output + cli.Error;
+        if (hasSet)
+        {
+            Assert.True(cli.ExitCode == 0, output);
+            Assert.Contains("Using existing DbContext 'DataAccess.StoreContext' from project 'DataAccess'", output);
+            Assert.DoesNotContain("An error occurred", output);
+            var pagesDir = Path.Combine(_testProjectDir, "Pages", "ProductPages");
+            Assert.Equal(10, Directory.GetFiles(pagesDir, "*", SearchOption.TopDirectoryOnly).Length);
+            foreach (var page in new[] { "Create", "Delete", "Details", "Edit", "Index" })
+            {
+                Assert.True(File.Exists(Path.Combine(pagesDir, page + ".cshtml")), output);
+                var code = File.ReadAllText(Path.Combine(pagesDir, page + ".cshtml.cs"));
+                Assert.Contains("using Entities;", code);
+                Assert.Contains("using DataAccess;", code);
+                Assert.Contains("_context.Products", code);
+            }
+            var after = await RunReferencedSolutionBuildAsync();
+            Assert.True(after.ExitCode == 0, after.Output + after.Error);
+        }
+        else
+        {
+            Assert.NotEqual(0, cli.ExitCode);
+            Assert.Contains(scenario == "AmbiguousModel" ? "Multiple classes match --model" : "has no DbSet", output);
+            if (scenario != "AmbiguousModel")
+            {
+                Assert.Contains("DataAccess.StoreContext", output);
+                Assert.Contains("Add a DbSet<", output);
+            }
+            Assert.Equal(webSources, Directory.GetFiles(_testProjectDir, "*", SearchOption.AllDirectories)
+                .Where(p => !p.Contains(Path.DirectorySeparatorChar + "obj" + Path.DirectorySeparatorChar) &&
+                    !p.Contains(Path.DirectorySeparatorChar + "bin" + Path.DirectorySeparatorChar)).OrderBy(p => p).ToArray());
+        }
+        Assert.False(Directory.Exists(Path.Combine(_testProjectDir, "Data")), output);
+        Assert.Equal(program, File.ReadAllText(programPath));
+        Assert.Equal(appSettings, File.ReadAllText(settingsPath));
+        foreach (var source in librarySources)
+        {
+            Assert.Equal(source.Value, Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(source.Key))));
+        }
+    }
+
+    private async Task<(int ExitCode, string Output, string Error)> RunReferencedSolutionBuildAsync()
+    {
+        // Do not leave reusable solution-build nodes holding redirected output pipes open.
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = ScaffoldCliHelper.GetDotNetPath(),
+                Arguments = $"build -f {TargetFramework} --disable-build-servers -m:1",
+                WorkingDirectory = _testDirectory,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+        process.StartInfo.Environment.Remove("MSBUILD_EXE_PATH");
+        process.StartInfo.Environment.Remove("MSBuildSDKsPath");
+        process.StartInfo.Environment.Remove("MSBuildExtensionsPath");
+        process.Start();
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        await Task.WhenAll(output, error);
+        await process.WaitForExitAsync();
+        return (process.ExitCode, output.Result, error.Result);
+    }
+
     protected Task<(int ExitCode, string Output, string Error)> RunBuildAsync(string workingDirectory)
         => ScaffoldCliHelper.RunBuildForFrameworkAsync(workingDirectory, TargetFramework);
 

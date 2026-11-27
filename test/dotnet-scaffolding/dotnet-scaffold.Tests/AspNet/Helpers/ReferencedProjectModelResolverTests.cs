@@ -52,13 +52,14 @@ public class ReferencedProjectModelResolverTests : IDisposable
         var matches = await ReferencedProjectModelResolver.FindMatchesAsync(web, "ContactUs");
         var selected = ReferencedProjectModelResolver.SelectSingleMatch(matches, "ContactUs", logger);
 
-        Assert.Null(selected);
+        Assert.Equal(ReferencedProjectLookupStatus.Ambiguous, selected.Status);
+        Assert.Null(selected.Symbol);
         Assert.Equal(
             "Multiple classes match --model 'ContactUs' in referenced projects: 'LibA.ContactUs' (LibA), 'LibB.ContactUs' (LibB). Use a fully qualified class name.",
             Assert.Single(logger.Errors));
 
         var qualified = await ReferencedProjectModelResolver.FindMatchesAsync(web, "LibB.ContactUs");
-        Assert.Equal("LibB.ContactUs", ReferencedProjectModelResolver.SelectSingleMatch(qualified, "LibB.ContactUs", logger)!.ToDisplayString());
+        Assert.Equal("LibB.ContactUs", ReferencedProjectModelResolver.SelectSingleMatch(qualified, "LibB.ContactUs", logger).Symbol!.ToDisplayString());
     }
 
     [Theory]
@@ -119,7 +120,7 @@ public class ReferencedProjectModelResolverTests : IDisposable
         var match = Assert.Single(matches);
 
         Assert.Equal("A.ContactUs", match.ToDisplayString());
-        Assert.Same(match, ReferencedProjectModelResolver.SelectSingleMatch(matches, "ContactUs", logger));
+        Assert.Same(match, ReferencedProjectModelResolver.SelectSingleMatch(matches, "ContactUs", logger).Symbol);
         Assert.Empty(logger.Errors);
     }
 
@@ -152,6 +153,87 @@ public class ReferencedProjectModelResolverTests : IDisposable
         Assert.NotNull(properties);
         Assert.Equal("Id", properties.PrimaryKeyName);
         Assert.Equal(["Name", "Id"], properties.AllModelProperties.Select(p => p.Name));
+    }
+
+    private const string EfSource = "namespace Microsoft.EntityFrameworkCore { public class DbContext {} public class DbSet<TEntity> {} }";
+
+    [Theory]
+    [InlineData("public class StoreContext : Microsoft.EntityFrameworkCore.DbContext {}", true)]
+    [InlineData("public class BaseContext : Microsoft.EntityFrameworkCore.DbContext {} public class StoreContext : BaseContext {}", true)]
+    [InlineData("public class StoreContext {}", false)]
+    [InlineData("internal class StoreContext : Microsoft.EntityFrameworkCore.DbContext {}", false)]
+    [InlineData("public class StoreContext<T> : Microsoft.EntityFrameworkCore.DbContext {}", false)]
+    [InlineData("public record StoreContext;", false)]
+    [InlineData("public class Outer { public class StoreContext : Microsoft.EntityFrameworkCore.DbContext {} }", false)]
+    public async Task Resolve_ContextRequiresPublicTopLevelNonGenericNonRecordDbContext(string source, bool found)
+    {
+        var web = CreateSolution(("Web", "", ["DataAccess"]), ("DataAccess", EfSource + " namespace DataAccess { " + source + " }", []));
+        var loads = 0;
+        var result = await ReferencedProjectModelResolver.ResolveAsync("unused", "Missing", "storecontext", new ListLogger(),
+            loadProject: _ => { loads++; return Task.FromResult(web); });
+
+        Assert.Equal(1, loads);
+        Assert.Equal(ReferencedProjectLookupStatus.NotFound, result.Model.Status);
+        Assert.Equal(found ? ReferencedProjectLookupStatus.Found : ReferencedProjectLookupStatus.NotFound, result.Context.Status);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Resolve_CombinedLookupFindsDeclaredOrInheritedDbSet(bool inherited)
+    {
+        var contextSource = inherited
+            ? "public class BaseContext : Microsoft.EntityFrameworkCore.DbContext { public Microsoft.EntityFrameworkCore.DbSet<Entities.Product> Products { get; set; } } public class StoreContext : BaseContext {}"
+            : "public class StoreContext : Microsoft.EntityFrameworkCore.DbContext { public Microsoft.EntityFrameworkCore.DbSet<Entities.Product> Products { get; set; } }";
+        var web = CreateSolution(("Web", "", ["Entities", "DataAccess"]),
+            ("Entities", "namespace Entities; public class Product { public int Id { get; set; } }", []),
+            ("DataAccess", EfSource + " namespace DataAccess { " + contextSource + " }", ["Entities"]));
+        var loads = 0;
+        var result = await ReferencedProjectModelResolver.ResolveAsync("unused", "Product", "StoreContext", new ListLogger(),
+            loadProject: _ => { loads++; return Task.FromResult(web); });
+
+        Assert.Equal(1, loads);
+        Assert.Equal(ReferencedProjectLookupStatus.Found, result.Model.Status);
+        Assert.Equal(ReferencedProjectLookupStatus.Found, result.Context.Status);
+        Assert.Equal("Products", ReferencedProjectModelResolver.FindDbSetName(result.Context.Symbol!, "Entities.Product"));
+        Assert.Null(ReferencedProjectModelResolver.FindDbSetName(result.Context.Symbol!, "Other.Product"));
+    }
+
+    [Fact]
+    public async Task Resolve_ContextLookupUsesSimpleNamesOnly()
+    {
+        var web = CreateSolution(("Web", "", ["DataAccess"]),
+            ("DataAccess", EfSource + " namespace DataAccess { public class StoreContext : Microsoft.EntityFrameworkCore.DbContext {} }", []));
+        var result = await ReferencedProjectModelResolver.ResolveAsync("unused", null, "DataAccess.StoreContext", new ListLogger(), loadProject: _ => Task.FromResult(web));
+        Assert.Equal(ReferencedProjectLookupStatus.NotFound, result.Context.Status);
+    }
+
+    [Fact]
+    public async Task Resolve_AmbiguousContextDoesNotSelectCandidate()
+    {
+        var web = CreateSolution(("Web", "", ["DataAccess"]),
+            ("DataAccess", EfSource + " namespace A { public class StoreContext : Microsoft.EntityFrameworkCore.DbContext {} } namespace B { public class StoreContext : Microsoft.EntityFrameworkCore.DbContext {} }", []));
+        var result = await ReferencedProjectModelResolver.ResolveAsync("unused", null, "StoreContext", new ListLogger(), loadProject: _ => Task.FromResult(web));
+        Assert.Equal(ReferencedProjectLookupStatus.Ambiguous, result.Context.Status);
+        Assert.Null(result.Context.Symbol);
+    }
+
+    [Fact]
+    public async Task Resolve_LoadFailureReturnsLookupFailedForBothWithoutPartialResults()
+    {
+        var result = await ReferencedProjectModelResolver.ResolveAsync("unused", "Product", "StoreContext", new ListLogger(),
+            loadProject: _ => throw new InvalidOperationException("Simulated workspace load failure"));
+        Assert.Equal(ReferencedProjectLookupStatus.LookupFailed, result.Model.Status);
+        Assert.Equal(ReferencedProjectLookupStatus.LookupFailed, result.Context.Status);
+        Assert.Null(result.Model.Symbol);
+        Assert.Null(result.Context.Symbol);
+    }
+
+    [Fact]
+    public async Task Resolve_CancellationIsPropagated()
+    {
+        await Assert.ThrowsAsync<OperationCanceledException>(() => ReferencedProjectModelResolver.ResolveAsync("unused", "Product", "StoreContext", new ListLogger(),
+            loadProject: _ => throw new OperationCanceledException()));
     }
 
     private Project CreateSolution(params (string Name, string Source, string[] References)[] projects)

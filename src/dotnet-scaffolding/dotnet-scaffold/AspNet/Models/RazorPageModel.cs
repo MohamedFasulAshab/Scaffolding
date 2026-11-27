@@ -13,6 +13,8 @@ internal class RazorPageModel : CrudModel
     /// </summary>
     public string? RazorPageNamespace { get; set; }
 
+    internal bool UsesReferencedDbContext { get; set; }
+
     /// <summary>
     /// Gets the correct CSS class for an input element based on the .NET type name.
     /// </summary>

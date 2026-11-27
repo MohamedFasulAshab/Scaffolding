@@ -95,6 +95,17 @@ public class RazorPagesCrudNet10IntegrationTests : RazorPagesCrudIntegrationTest
     }
 
     [Fact]
+    public Task Scaffold_RazorPagesCrud_Net10_ReferencedContextExistingDbSet()
+        => AssertReferencedContextScenarioAsync();
+
+    [Theory]
+    [InlineData("MissingSet")]
+    [InlineData("AmbiguousModel")]
+    [InlineData("LocalModelMissingSet")]
+    public Task Scaffold_RazorPagesCrud_Net10_ReferencedContextValidationBeforeMutation(string scenario)
+        => AssertReferencedContextScenarioAsync(scenario);
+
+    [Fact]
     public async Task Scaffold_RazorPagesCrud_Net10_ModelInReferencedProject()
     {
         File.WriteAllText(_testProjectPath, ProjectContent.Replace(

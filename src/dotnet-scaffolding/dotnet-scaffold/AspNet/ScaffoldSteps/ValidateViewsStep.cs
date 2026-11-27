@@ -72,7 +72,7 @@ internal class ValidateViewsStep : ScaffoldStep
             context.Properties.Add(nameof(CrudSettings), viewSettings);
         }
 
-        var viewModel = await GetViewModelAsync(context, viewSettings);
+        var viewModel = await GetViewModelAsync(context, viewSettings, cancellationToken);
         if (viewModel is null)
         {
             _logger.LogError("An error occurred: 'ViewModel' instance could not be obtained");
@@ -130,8 +130,9 @@ internal class ValidateViewsStep : ScaffoldStep
     /// </summary>
     /// <param name="context">Scaffolder context.</param>
     /// <param name="settings">CrudSettings object containing the settings for scaffolding.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>Task that represents the asynchronous operation, with a ViewModel result if successful, null otherwise.</returns>
-    private async Task<ViewModel?> GetViewModelAsync(ScaffolderContext context, CrudSettings settings)
+    private async Task<ViewModel?> GetViewModelAsync(ScaffolderContext context, CrudSettings settings, CancellationToken cancellationToken)
     {
         ProjectInfo projectInfo = ClassAnalyzers.GetProjectInfo(settings.Project, _logger);
         context.SetSpecifiedTargetFramework(projectInfo.LowestSupportedTargetFramework);
@@ -146,7 +147,8 @@ internal class ValidateViewsStep : ScaffoldStep
         var modelClassSymbol = allClasses.FirstOrDefault(x => x.Name.Equals(settings.Model, StringComparison.OrdinalIgnoreCase));
         if (modelClassSymbol is null && !string.IsNullOrEmpty(settings.Model))
         {
-            modelClassSymbol = await ReferencedProjectModelResolver.FindModelAsync(settings.Project, settings.Model, _logger);
+            var result = await ReferencedProjectModelResolver.FindModelAsync(settings.Project, settings.Model, _logger, cancellationToken);
+            modelClassSymbol = result.Status == ReferencedProjectLookupStatus.Found ? result.Symbol : null;
         }
 
         if (string.IsNullOrEmpty(settings.Model) || modelClassSymbol is null)

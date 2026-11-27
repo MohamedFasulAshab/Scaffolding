@@ -7,104 +7,175 @@ using AspNetConstants = Microsoft.DotNet.Tools.Scaffold.AspNet.Common.Constants;
 
 namespace Microsoft.DotNet.Tools.Scaffold.AspNet.Helpers;
 
+internal enum ReferencedProjectLookupStatus
+{
+    Found,
+    NotFound,
+    Ambiguous,
+    LookupFailed
+}
+
+internal sealed record ReferencedProjectLookupResult(ReferencedProjectLookupStatus Status, INamedTypeSymbol? Symbol = null);
+
 /// <summary>
-/// Fallback lookup for a --model class declared in a project referenced by the target project.
-/// Intended to run only after the existing lookup in the target project found no match.
+/// Fallback lookup in source projects visible to the target project's compilation.
 /// </summary>
 internal static class ReferencedProjectModelResolver
 {
-    /// <summary>
-    /// Loads the target project and its referenced projects as source in a separate, short-lived
-    /// workspace and returns the single matching public class, or null when there is no match or the match is ambiguous.
-    /// </summary>
-    internal static async Task<INamedTypeSymbol?> FindModelAsync(string projectPath, string modelName, ILogger logger, CancellationToken cancellationToken = default)
+    internal static async Task<ReferencedProjectLookupResult> FindModelAsync(string projectPath, string modelName, ILogger logger, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrEmpty(projectPath) || string.IsNullOrEmpty(modelName))
+        var results = await ResolveAsync(projectPath, modelName, null, logger, cancellationToken);
+        return results.Model;
+    }
+
+    // Resolve both local misses together, so at most one MSBuild workspace is opened.
+    internal static async Task<(ReferencedProjectLookupResult Model, ReferencedProjectLookupResult Context)> ResolveAsync(
+        string projectPath, string? modelName, string? contextName, ILogger logger, CancellationToken cancellationToken = default,
+        Func<CancellationToken, Task<Project>>? loadProject = null)
+    {
+        var notFound = new ReferencedProjectLookupResult(ReferencedProjectLookupStatus.NotFound);
+        if (string.IsNullOrEmpty(modelName) && string.IsNullOrEmpty(contextName))
         {
-            return null;
+            return (notFound, notFound);
         }
 
-        IReadOnlyList<INamedTypeSymbol> matches;
         try
         {
-            matches = await FindMatchesWithMSBuildAsync(Path.GetFullPath(projectPath), modelName, logger, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (loadProject is not null)
+            {
+                return await ResolveProjectAsync(await loadProject(cancellationToken), modelName, contextName, logger, cancellationToken);
+            }
+
+            return await ResolveWithMSBuildAsync(Path.GetFullPath(projectPath), modelName, contextName, logger, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            logger.LogWarning("Referenced project lookup for '{ModelName}' failed: {Message}", modelName, ex.Message);
-            return null;
+            logger.LogWarning("Referenced project lookup failed: {Message}", ex.Message);
+            var failed = new ReferencedProjectLookupResult(ReferencedProjectLookupStatus.LookupFailed);
+            return (failed, failed);
         }
-
-        return SelectSingleMatch(matches, modelName, logger);
     }
 
-    // Kept separate so MSBuild workspace types are only loaded on this path.
-    private static async Task<IReadOnlyList<INamedTypeSymbol>> FindMatchesWithMSBuildAsync(string fullProjectPath, string modelName, ILogger logger, CancellationToken cancellationToken)
+    // Keep MSBuild workspace types off the local-only path.
+    private static async Task<(ReferencedProjectLookupResult Model, ReferencedProjectLookupResult Context)> ResolveWithMSBuildAsync(
+        string projectPath, string? modelName, string? contextName, ILogger logger, CancellationToken cancellationToken)
     {
         using var workspace = MSBuildWorkspace.Create();
         workspace.LoadMetadataForReferencedProjects = false;
-        using var workspaceFailedRegistration = workspace.RegisterWorkspaceFailedHandler(
-            e =>
-            {
-                if (e.Diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
-                {
-                    logger.LogWarning("Referenced project lookup workspace diagnostic: {Message}", e.Diagnostic.Message);
-                }
-            });
-        var project = await workspace.OpenProjectAsync(fullProjectPath, cancellationToken: cancellationToken);
-        return await FindMatchesAsync(project, modelName, cancellationToken);
-    }
-
-    /// <summary>
-    /// Searches only the source projects that are visible to <paramref name="rootProject"/>'s compilation
-    /// (<see cref="CompilationReference"/>s). Framework and package references are never searched.
-    /// A name containing '.' is matched case-sensitively against the namespace-qualified name;
-    /// otherwise the simple name is matched case-insensitively. Only public, top-level, non-generic, non-record classes are candidates.
-    /// </summary>
-    internal static async Task<IReadOnlyList<INamedTypeSymbol>> FindMatchesAsync(Project rootProject, string modelName, CancellationToken cancellationToken = default)
-    {
-        var compilation = await rootProject.GetCompilationAsync(cancellationToken);
-        if (compilation is null || string.IsNullOrEmpty(modelName))
+        var failed = 0;
+        using var registration = workspace.RegisterWorkspaceFailedHandler(e =>
         {
-            return [];
+            if (e.Diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
+            {
+                Interlocked.Exchange(ref failed, 1);
+                logger.LogWarning("Referenced project lookup workspace diagnostic: {Message}", e.Diagnostic.Message);
+            }
+        });
+        var project = await workspace.OpenProjectAsync(projectPath, cancellationToken: cancellationToken);
+        var results = await ResolveProjectAsync(project, modelName, contextName, logger, cancellationToken);
+        if (Volatile.Read(ref failed) != 0)
+        {
+            var failure = new ReferencedProjectLookupResult(ReferencedProjectLookupStatus.LookupFailed);
+            return (failure, failure);
         }
 
-        var isQualifiedName = modelName.Contains('.');
-        var matches = new List<INamedTypeSymbol>();
+        return results;
+    }
+
+    private static async Task<(ReferencedProjectLookupResult Model, ReferencedProjectLookupResult Context)> ResolveProjectAsync(
+        Project project, string? modelName, string? contextName, ILogger logger, CancellationToken cancellationToken)
+    {
+        // Even a context-only lookup must reject an unavailable compilation rather than create a context.
+        var compilation = await project.GetCompilationAsync(cancellationToken)
+            ?? throw new InvalidOperationException("Referenced project compilation is unavailable.");
+        var types = GetReferencedTypes(compilation);
+        var modelMatches = types.Where(t => !string.IsNullOrEmpty(modelName) && IsNameMatch(t, modelName!, modelName!.Contains('.'))).ToList();
+        var contextMatches = types.Where(t => !string.IsNullOrEmpty(contextName) &&
+            t.Name.Equals(contextName, StringComparison.OrdinalIgnoreCase) && IsDbContext(t)).ToList();
+        return (SelectSingleMatch(modelMatches, modelName ?? string.Empty, logger),
+            SelectSingleMatch(contextMatches, contextName ?? string.Empty, logger, isContext: true));
+    }
+
+    internal static async Task<IReadOnlyList<INamedTypeSymbol>> FindMatchesAsync(Project rootProject, string modelName, CancellationToken cancellationToken = default)
+    {
+        var compilation = await rootProject.GetCompilationAsync(cancellationToken)
+            ?? throw new InvalidOperationException("Referenced project compilation is unavailable.");
+        return GetReferencedTypes(compilation).Where(t => IsNameMatch(t, modelName, modelName.Contains('.'))).ToList();
+    }
+
+    private static IReadOnlyList<INamedTypeSymbol> GetReferencedTypes(Compilation compilation)
+    {
+        var types = new List<INamedTypeSymbol>();
         foreach (var reference in compilation.References.OfType<CompilationReference>())
         {
             if (compilation.GetAssemblyOrModuleSymbol(reference) is not IAssemblySymbol assembly)
             {
-                continue;
+                throw new InvalidOperationException("Referenced project assembly is unavailable.");
             }
 
             foreach (var type in GetTopLevelTypes(assembly.GlobalNamespace))
             {
-                if (IsCandidate(type) && IsNameMatch(type, modelName, isQualifiedName) &&
-                    !matches.Contains(type, SymbolEqualityComparer.Default))
+                if (IsCandidate(type) && !types.Contains(type, SymbolEqualityComparer.Default))
                 {
-                    matches.Add(type);
+                    types.Add(type);
                 }
             }
         }
 
-        return matches
-            .OrderBy(t => t.ContainingAssembly.Name, StringComparer.Ordinal)
-            .ThenBy(t => t.ToDisplayString(), StringComparer.Ordinal)
-            .ToList();
+        return types.OrderBy(t => t.ContainingAssembly.Name, StringComparer.Ordinal)
+            .ThenBy(t => t.ToDisplayString(), StringComparer.Ordinal).ToList();
     }
 
-    internal static INamedTypeSymbol? SelectSingleMatch(IReadOnlyList<INamedTypeSymbol> matches, string modelName, ILogger logger)
+    internal static ReferencedProjectLookupResult SelectSingleMatch(IReadOnlyList<INamedTypeSymbol> matches, string name, ILogger logger, bool isContext = false)
     {
         if (matches.Count == 1)
         {
-            return matches[0];
+            return new(ReferencedProjectLookupStatus.Found, matches[0]);
         }
 
         if (matches.Count > 1)
         {
             var candidates = string.Join(", ", matches.Select(t => $"'{t.ToDisplayString()}' ({t.ContainingAssembly.Name})"));
-            logger.LogError($"Multiple classes match {AspNetConstants.CliOptions.ModelCliOption} '{modelName}' in referenced projects: {candidates}. Use a fully qualified class name.");
+            var option = isContext ? AspNetConstants.CliOptions.DataContextOption : AspNetConstants.CliOptions.ModelCliOption;
+            var advice = isContext ? "Use a unique DbContext class name." : "Use a fully qualified class name.";
+            logger.LogError($"Multiple classes match {option} '{name}' in referenced projects: {candidates}. {advice}");
+            return new(ReferencedProjectLookupStatus.Ambiguous);
+        }
+
+        return new(ReferencedProjectLookupStatus.NotFound);
+    }
+
+    private static bool IsDbContext(INamedTypeSymbol type)
+    {
+        for (var baseType = type.BaseType; baseType is not null; baseType = baseType.BaseType)
+        {
+            if (baseType.ToDisplayString() == "Microsoft.EntityFrameworkCore.DbContext")
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    internal static string? FindDbSetName(INamedTypeSymbol context, string? modelFullName)
+    {
+        for (INamedTypeSymbol? type = context; type is not null; type = type.BaseType)
+        {
+            foreach (var property in type.GetMembers().OfType<IPropertySymbol>())
+            {
+                if (property.Type is INamedTypeSymbol propertyType && propertyType.Arity == 1 &&
+                    propertyType.OriginalDefinition.ToDisplayString() == "Microsoft.EntityFrameworkCore.DbSet<TEntity>" &&
+                    propertyType.TypeArguments[0].ToDisplayString() == modelFullName)
+                {
+                    return property.Name;
+                }
+            }
         }
 
         return null;
@@ -126,19 +197,10 @@ internal static class ReferencedProjectModelResolver
         }
     }
 
-    private static bool IsCandidate(INamedTypeSymbol type)
-    {
-        return type.TypeKind == TypeKind.Class &&
-            !type.IsRecord &&
-            !type.IsImplicitlyDeclared &&
-            type.Arity == 0 &&
-            type.DeclaredAccessibility == Accessibility.Public;
-    }
+    private static bool IsCandidate(INamedTypeSymbol type) => type.TypeKind == TypeKind.Class &&
+        !type.IsRecord && !type.IsImplicitlyDeclared && type.Arity == 0 && type.DeclaredAccessibility == Accessibility.Public;
 
-    private static bool IsNameMatch(INamedTypeSymbol type, string modelName, bool isQualifiedName)
-    {
-        return isQualifiedName
-            ? type.ToDisplayString().Equals(modelName, StringComparison.Ordinal)
-            : type.Name.Equals(modelName, StringComparison.OrdinalIgnoreCase);
-    }
+    private static bool IsNameMatch(INamedTypeSymbol type, string name, bool qualified) => qualified
+        ? type.ToDisplayString().Equals(name, StringComparison.Ordinal)
+        : type.Name.Equals(name, StringComparison.OrdinalIgnoreCase);
 }
