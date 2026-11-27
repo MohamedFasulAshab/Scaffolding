@@ -55,7 +55,7 @@ internal static class ReferencedProjectModelResolver
         }
         catch (Exception ex)
         {
-            logger.LogWarning("Referenced project lookup failed: {Message}", ex.Message);
+            logger.LogWarning($"Referenced project lookup failed: {ex.Message}");
             var failed = new ReferencedProjectLookupResult(ReferencedProjectLookupStatus.LookupFailed);
             return (failed, failed);
         }
@@ -73,7 +73,7 @@ internal static class ReferencedProjectModelResolver
             if (e.Diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
             {
                 Interlocked.Exchange(ref failed, 1);
-                logger.LogWarning("Referenced project lookup workspace diagnostic: {Message}", e.Diagnostic.Message);
+                logger.LogWarning($"Referenced project could not be loaded: {e.Diagnostic.Message}");
             }
         });
         var project = await workspace.OpenProjectAsync(projectPath, cancellationToken: cancellationToken);

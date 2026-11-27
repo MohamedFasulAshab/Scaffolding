@@ -1,6 +1,7 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using System;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -104,6 +105,49 @@ public class RazorPagesCrudNet10IntegrationTests : RazorPagesCrudIntegrationTest
     [InlineData("LocalModelMissingSet")]
     public Task Scaffold_RazorPagesCrud_Net10_ReferencedContextValidationBeforeMutation(string scenario)
         => AssertReferencedContextScenarioAsync(scenario);
+
+    [Fact]
+    public async Task Scaffold_RazorPagesCrud_Net10_ReferencedModelLocalContextWithoutDbSet()
+    {
+        var libraryDir = Path.Combine(_testDirectory, "Entities");
+        Directory.CreateDirectory(libraryDir);
+        File.WriteAllText(Path.Combine(_testDirectory, "NuGet.config"), ScaffoldCliHelper.GetTestNuGetConfig(TargetFramework));
+        File.WriteAllText(Path.Combine(libraryDir, "Entities.csproj"),
+            $"<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>{TargetFramework}</TargetFramework></PropertyGroup></Project>");
+        File.WriteAllText(Path.Combine(libraryDir, "Product.cs"),
+            "namespace Entities; public class Product { public int Id { get; set; } public string Name { get; set; } }");
+        File.WriteAllText(_testProjectPath, ProjectContent.Replace("</Project>",
+            "<ItemGroup><ProjectReference Include=\"../Entities/Entities.csproj\" /><PackageReference Include=\"Microsoft.EntityFrameworkCore.Sqlite\" Version=\"10.0.0\" /></ItemGroup></Project>"));
+        var contextPath = Path.Combine(_testProjectDir, "StoreContext.cs");
+        File.WriteAllText(contextPath,
+            "using Microsoft.EntityFrameworkCore; namespace TestProject.Data; public class StoreContext : DbContext { public StoreContext(DbContextOptions<StoreContext> options) : base(options) {} }");
+        File.WriteAllText(Path.Combine(_testProjectDir, "Program.cs"), "using TestProject.Data;\n" + ScaffoldCliHelper.GetMinimalProgramCs());
+        var before = await RunBuildAsync(_testProjectDir);
+        Assert.True(before.ExitCode == 0, before.Output + before.Error);
+        var hashes = Directory.GetFiles(libraryDir, "*", SearchOption.TopDirectoryOnly)
+            .ToDictionary(p => p, p => Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(p))));
+
+        var cli = await ScaffoldCliHelper.RunScaffoldAsync(TargetFramework, "razorpages-crud",
+            "--project", _testProjectPath, "--model", "Product", "--dataContext", "StoreContext", "--dbProvider", "sqlite-efcore", "--page", "CRUD");
+        var output = cli.Output + cli.Error;
+        Assert.True(cli.ExitCode == 0, output);
+        Assert.DoesNotContain("An error occurred", output);
+        Assert.DoesNotContain("has no DbSet", output);
+        Assert.Contains("DbSet<Entities.Product>", File.ReadAllText(contextPath));
+        var pagesDir = Path.Combine(_testProjectDir, "Pages", "ProductPages");
+        Assert.Equal(10, Directory.GetFiles(pagesDir, "*", SearchOption.TopDirectoryOnly).Length);
+        foreach (var page in new[] { "Create", "Delete", "Details", "Edit", "Index" })
+        {
+            Assert.True(File.Exists(Path.Combine(pagesDir, page + ".cshtml")), output);
+            Assert.Contains("using Entities;", File.ReadAllText(Path.Combine(pagesDir, page + ".cshtml.cs")));
+        }
+        var after = await RunBuildAsync(_testProjectDir);
+        Assert.True(after.ExitCode == 0, after.Output + after.Error);
+        foreach (var source in hashes)
+        {
+            Assert.Equal(source.Value, Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(source.Key))));
+        }
+    }
 
     [Fact]
     public async Task Scaffold_RazorPagesCrud_Net10_ModelInReferencedProject()

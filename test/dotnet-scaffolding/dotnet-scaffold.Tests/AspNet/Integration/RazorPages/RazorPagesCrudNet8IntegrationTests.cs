@@ -45,6 +45,10 @@ public class RazorPagesCrudNet8IntegrationTests : RazorPagesCrudIntegrationTests
         => AssertReferencedContextScenarioAsync();
 
     [Fact]
+    public Task Scaffold_RazorPagesCrud_Net8_AmbiguousReferencedModelBeforeMutation()
+        => AssertReferencedContextScenarioAsync("AmbiguousModel");
+
+    [Fact]
     public async Task Scaffold_RazorPagesCrud_Net8_CliInvocation()
     {
         // Arrange — write project + Program.cs + model class

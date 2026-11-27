@@ -5,6 +5,7 @@ using Microsoft.DotNet.Scaffolding.Core.Scaffolders;
 using Microsoft.DotNet.Scaffolding.Core.Steps;
 using Microsoft.DotNet.Scaffolding.Internal.Services;
 using Microsoft.DotNet.Scaffolding.Internal.Telemetry;
+using Microsoft.DotNet.Scaffolding.Roslyn.Services;
 using Microsoft.DotNet.Scaffolding.TextTemplating.DbContext;
 using Microsoft.DotNet.Tools.Scaffold.AspNet.Common;
 using Microsoft.DotNet.Tools.Scaffold.AspNet.Helpers;
@@ -14,6 +15,7 @@ using Microsoft.DotNet.Tools.Scaffold.AspNet.Telemetry;
 using Microsoft.Extensions.Logging;
 using AspNetConstants = Microsoft.DotNet.Tools.Scaffold.AspNet.Common.Constants;
 using Constants = Microsoft.DotNet.Scaffolding.Internal.Constants;
+using Project = Microsoft.CodeAnalysis.Project;
 
 namespace Microsoft.DotNet.Tools.Scaffold.AspNet.ScaffoldSteps;
 
@@ -184,6 +186,20 @@ internal class ValidateRazorPagesStep : ScaffoldStep
         };
     }
 
+    internal static Task<(ReferencedProjectLookupResult Model, ReferencedProjectLookupResult Context)> ResolveReferencedProjectsAsync(
+        string projectPath, string? modelName, string? contextName, ILogger logger, CancellationToken cancellationToken = default,
+        Func<CancellationToken, Task<Project>>? loadProject = null)
+    {
+        // A missing local context remains a new-context scenario unless evaluated references exist.
+        if (!string.IsNullOrEmpty(contextName) &&
+            (!new MSBuildProjectService(Path.GetFullPath(projectPath)).TryGetProjectReferences(out var references, out _) || references.Count == 0))
+        {
+            contextName = null;
+        }
+
+        return ReferencedProjectModelResolver.ResolveAsync(projectPath, modelName, contextName, logger, cancellationToken, loadProject);
+    }
+
     /// <summary>
     /// Initializes and returns the RazorPageModel for scaffolding.
     /// </summary>
@@ -206,7 +222,7 @@ internal class ValidateRazorPagesStep : ScaffoldStep
         var allClasses = await projectInfo.CodeService.GetAllClassSymbolsAsync();
         var modelClassSymbol = allClasses.FirstOrDefault(x => x.Name.Equals(settings.Model, StringComparison.OrdinalIgnoreCase));
         var localContext = allClasses.FirstOrDefault(x => x.Name.Equals(settings.DataContext, StringComparison.OrdinalIgnoreCase));
-        var referenced = await ReferencedProjectModelResolver.ResolveAsync(settings.Project,
+        var referenced = await ResolveReferencedProjectsAsync(settings.Project,
             modelClassSymbol is null ? settings.Model : null,
             localContext is null ? settings.DataContext : null, _logger, cancellationToken);
         if (referenced.Model.Status is ReferencedProjectLookupStatus.Ambiguous or ReferencedProjectLookupStatus.LookupFailed ||

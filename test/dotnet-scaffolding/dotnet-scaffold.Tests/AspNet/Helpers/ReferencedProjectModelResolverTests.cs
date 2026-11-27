@@ -9,6 +9,8 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.DotNet.Scaffolding.CodeModification.Helpers;
 using Microsoft.DotNet.Tools.Scaffold.AspNet.Helpers;
+using Microsoft.DotNet.Tools.Scaffold.AspNet.Common;
+using Microsoft.DotNet.Tools.Scaffold.AspNet.ScaffoldSteps;
 using Microsoft.Extensions.Logging;
 using Xunit;
 
@@ -197,6 +199,92 @@ public class ReferencedProjectModelResolverTests : IDisposable
         Assert.Equal(ReferencedProjectLookupStatus.Found, result.Context.Status);
         Assert.Equal("Products", ReferencedProjectModelResolver.FindDbSetName(result.Context.Symbol!, "Entities.Product"));
         Assert.Null(ReferencedProjectModelResolver.FindDbSetName(result.Context.Symbol!, "Other.Product"));
+    }
+
+    [Fact]
+    public async Task Resolve_GlobalNamespaceModelMatchesDbSetUsingClassAnalyzerFullName()
+    {
+        var web = CreateSolution(("Web", "", ["DataAccess"]),
+            ("DataAccess", EfSource + " public class Product { public int Id { get; set; } } public class StoreContext : Microsoft.EntityFrameworkCore.DbContext { public Microsoft.EntityFrameworkCore.DbSet<Product> Products { get; set; } }", []));
+        var result = await ReferencedProjectModelResolver.ResolveAsync("unused", "Product", "StoreContext", new ListLogger(),
+            loadProject: _ => Task.FromResult(web));
+        var modelInfo = ClassAnalyzers.GetModelClassInfo(result.Model.Symbol!);
+
+        Assert.Equal("Product", modelInfo.ModelFullName);
+        Assert.Equal("Products", ReferencedProjectModelResolver.FindDbSetName(result.Context.Symbol!, modelInfo.ModelFullName));
+        Assert.Null(ReferencedProjectModelResolver.FindDbSetName(result.Context.Symbol!, "Other.Product"));
+    }
+
+    [Fact]
+    public async Task Resolve_NeitherRequestedDoesNotLoadWorkspace()
+    {
+        var loads = 0;
+        var result = await ReferencedProjectModelResolver.ResolveAsync("unused", null, null, new ListLogger(),
+            loadProject: _ => { loads++; throw new InvalidOperationException("Workspace must not load"); });
+
+        Assert.Equal(0, loads);
+        Assert.Equal(ReferencedProjectLookupStatus.NotFound, result.Model.Status);
+        Assert.Equal(ReferencedProjectLookupStatus.NotFound, result.Context.Status);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RazorPages_LocalModelMissingContextWithoutEvaluatedReferencesKeepsNewContextWithoutLoading(bool evaluationFails)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var projectPath = Path.Combine(directory, "Web.csproj");
+            File.WriteAllText(projectPath, evaluationFails
+                ? "<Project><Import Project=\"missing.props\" /></Project>"
+                : "<Project />");
+            var web = CreateSolution(("Web", "public class Product { public int Id { get; set; } }", []));
+            var model = (await web.GetCompilationAsync())!.GetTypeByMetadataName("Product")!;
+            var loads = 0;
+            var result = await ValidateRazorPagesStep.ResolveReferencedProjectsAsync(projectPath, null, "NewContext", new ListLogger(),
+                loadProject: _ => { loads++; throw new InvalidOperationException("Workspace must not load"); });
+
+            Assert.Equal(0, loads);
+            Assert.Equal(ReferencedProjectLookupStatus.NotFound, result.Context.Status);
+            var contextInfo = ClassAnalyzers.GetDbContextInfo(projectPath, result.Context.Symbol, "NewContext", "sqlite-efcore", ClassAnalyzers.GetModelClassInfo(model));
+            Assert.Equal("NewContext", contextInfo.DbContextClassName);
+            Assert.Equal(Path.Combine(directory, "Data", "NewContext.cs"), contextInfo.DbContextClassPath);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RazorPages_ReferenceGatePreservesModelLookupAndAllowsContextWithReferences(bool hasReferences)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var projectPath = Path.Combine(directory, "Web.csproj");
+            File.WriteAllText(projectPath, hasReferences
+                ? "<Project><ItemGroup><ProjectReference Include=\"DataAccess.csproj\" /></ItemGroup></Project>"
+                : "<Project />");
+            var web = CreateSolution(("Web", "", ["DataAccess"]),
+                ("DataAccess", EfSource + " public class Product {} public class StoreContext : Microsoft.EntityFrameworkCore.DbContext {}", []));
+            var loads = 0;
+            var result = await ValidateRazorPagesStep.ResolveReferencedProjectsAsync(projectPath, "Product", "StoreContext", new ListLogger(),
+                loadProject: _ => { loads++; return Task.FromResult(web); });
+
+            Assert.Equal(1, loads);
+            Assert.Equal(ReferencedProjectLookupStatus.Found, result.Model.Status);
+            Assert.Equal(hasReferences ? ReferencedProjectLookupStatus.Found : ReferencedProjectLookupStatus.NotFound, result.Context.Status);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }
 
     [Fact]
